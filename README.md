@@ -1,6 +1,6 @@
-# Porthole
-
-Understand your cluster's network boundaries.
+<p align="center">
+  <img src=".img/banner.png" width="80%">
+</p>
 
 Lightweight Go tool that reads `networking.k8s.io/v1` `NetworkPolicy` and answers two questions:
 
