@@ -1,0 +1,81 @@
+# app-a → app-b TCP/8080 is allowed.
+# kubectl apply -f examples/allow.yaml
+# kubectl delete -f examples/allow.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: porthole-allow
+  labels:
+    porthole: allow
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-a
+  namespace: porthole-allow
+  labels:
+    app: app-a
+spec:
+  containers:
+    - name: app-a
+      image: registry.k8s.io/pause:3.10
+      ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-b
+  namespace: porthole-allow
+  labels:
+    app: app-b
+spec:
+  containers:
+    - name: app-b
+      image: registry.k8s.io/pause:3.10
+      ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-a-egress
+  namespace: porthole-allow
+spec:
+  podSelector:
+    matchLabels:
+      app: app-a
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: app-b
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-b-ingress
+  namespace: porthole-allow
+spec:
+  podSelector:
+    matchLabels:
+      app: app-b
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: app-a
+      ports:
+        - protocol: TCP
+          port: 8080

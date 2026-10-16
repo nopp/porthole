@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Porthole</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script>
+    (function () {
+      var theme = localStorage.getItem("porthole.theme");
+      var lang = localStorage.getItem("porthole.lang");
+      document.documentElement.dataset.theme = theme === "light" ? "light" : "dark";
+      document.documentElement.lang = lang === "pt-BR" ? "pt-BR" : "en";
+    })();
+  </script>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Porthole</h1>
+      <p class="tag" data-i18n="tagline">Understand your cluster's network boundaries.</p>
+    </div>
+    <div class="header-side">
+      <p id="meta" class="meta" data-i18n="loading">loading…</p>
+      <div class="prefs">
+        <label>
+          <span data-i18n="language">Language</span>
+          <select id="lang">
+            <option value="en" selected>English</option>
+            <option value="pt-BR">Português</option>
+          </select>
+        </label>
+        <label>
+          <span data-i18n="theme">Theme</span>
+          <select id="theme">
+            <option value="dark" data-i18n="themeDark">Dark</option>
+            <option value="light" data-i18n="themeLight">Light</option>
+          </select>
+        </label>
+      </div>
+      <button id="refresh" type="button" data-i18n="refresh">Refresh</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside>
+      <label>
+        <span data-i18n="namespace">Namespace</span>
+        <select id="ns">
+          <option value="">all</option>
+        </select>
+      </label>
+      <label>
+        <span data-i18n="filter">Filter</span>
+        <input id="q" type="search" data-i18n-placeholder="filterPlaceholder" placeholder="name or label" autocomplete="off">
+      </label>
+      <div id="pods" class="pod-list"></div>
+    </aside>
+
+    <main>
+      <section id="empty" class="panel empty" data-i18n="empty">
+        Pick a pod to see which NetworkPolicies isolate it and to simulate a flow.
+      </section>
+
+      <div id="detail" class="stack hidden">
+        <section class="panel">
+          <div class="pod-head">
+            <div>
+              <h2 id="pod-title"></h2>
+              <p id="pod-meta" class="meta"></p>
+            </div>
+            <div class="iso">
+              <span id="iso-in" class="chip">Ingress</span>
+              <span id="iso-eg" class="chip">Egress</span>
+            </div>
+          </div>
+          <ul id="pod-notes" class="notes"></ul>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th data-i18n="colPolicy">Policy</th>
+                  <th data-i18n="colSelects">Selects</th>
+                  <th data-i18n="colIsolates">Isolates</th>
+                  <th data-i18n="colRules">Rules</th>
+                  <th data-i18n="colNotes">Notes</th>
+                </tr>
+              </thead>
+              <tbody id="policy-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2 data-i18n="simTitle">Can pod A reach pod B?</h2>
+          <form id="sim" class="sim">
+            <label><span data-i18n="from">From</span>
+              <select id="from"></select>
+            </label>
+            <label><span data-i18n="to">To</span>
+              <select id="to"></select>
+            </label>
+            <label><span data-i18n="orIp">or IP</span>
+              <input id="to-ip" placeholder="10.1.0.5" autocomplete="off">
+            </label>
+            <label><span data-i18n="protocol">Protocol</span>
+              <select id="protocol">
+                <option>TCP</option>
+                <option>UDP</option>
+                <option>SCTP</option>
+              </select>
+            </label>
+            <label><span data-i18n="port">Port</span>
+              <input id="port" type="number" min="1" max="65535" value="8080">
+            </label>
+            <button type="submit" data-i18n="simulate">Simulate</button>
+          </form>
+          <div id="verdict" class="verdict hidden"></div>
+        </section>
+
+        <section class="panel">
+          <div class="pod-head">
+            <h2 data-i18n="graphTitle">Pod graph</h2>
+            <p id="graph-notes" class="meta"></p>
+          </div>
+          <svg id="graph" viewBox="0 0 960 560" role="img" data-i18n-aria="graphAria" aria-label="Reachability graph for the focused pod"></svg>
+          <p class="legend"><span class="swatch ok"></span> <span data-i18n="allowedEdge">allowed</span> <span class="swatch no"></span> <span data-i18n="deniedEdge">denied</span> <span class="swatch cidr"></span> ipBlock</p>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

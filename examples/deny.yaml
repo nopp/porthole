@@ -1,0 +1,67 @@
+# app-a → app-b is denied. app-a cannot leave; app-b accepts nothing.
+# kubectl apply -f examples/deny.yaml
+# kubectl delete -f examples/deny.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: porthole-deny
+  labels:
+    porthole: deny
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-a
+  namespace: porthole-deny
+  labels:
+    app: app-a
+spec:
+  containers:
+    - name: app-a
+      image: registry.k8s.io/pause:3.10
+      ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-b
+  namespace: porthole-deny
+  labels:
+    app: app-b
+spec:
+  containers:
+    - name: app-b
+      image: registry.k8s.io/pause:3.10
+      ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-a-egress-deny
+  namespace: porthole-deny
+spec:
+  podSelector:
+    matchLabels:
+      app: app-a
+  policyTypes:
+    - Egress
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-b-ingress-deny
+  namespace: porthole-deny
+spec:
+  podSelector:
+    matchLabels:
+      app: app-b
+  policyTypes:
+    - Ingress
+  ingress: []
