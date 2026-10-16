@@ -79,7 +79,7 @@ The same steps are in `examples/README.md`.
 ## What the screen shows
 
 - English or Portuguese, and a light or dark theme. The choice stays in the browser.
-- A pod list with a badge when Ingress or Egress is isolated.
+- Pods grouped by namespace. Each row shows the IP and whether ingress, egress, or both are isolated.
 - A table of NetworkPolicies in the namespace: whether they select the pod, which direction they isolate, the text of each rule, and a warning when `policyTypes` was omitted.
 - An A → B or A → IP simulation.
 - A graph of the focused pod on the chosen port. Green is allowed, dashed red is denied. `ipBlock` entries appear as nodes. The graph stays in the pod’s namespace and in namespaces named by a `namespaceSelector` that is not “all”.

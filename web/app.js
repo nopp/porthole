@@ -51,6 +51,8 @@ const I18N = {
     denied: "Negado",
     isolated: "isolado",
     notIsolated: "não isolado",
+    stateOpen: "Aberto",
+    stateBoth: "Ingress e egress isolados",
     error: "Erro",
     pickTarget: "Escolha um pod de destino ou informe um IP.",
     pods: "pods",
@@ -99,6 +101,8 @@ const I18N = {
     denied: "Denied",
     isolated: "isolated",
     notIsolated: "not isolated",
+    stateOpen: "Open",
+    stateBoth: "Ingress and egress isolated",
     error: "Error",
     pickTarget: "Choose a destination pod or enter an IP.",
     pods: "pods",
@@ -212,17 +216,53 @@ function visiblePods() {
 function renderPods() {
   const list = $("pods");
   const pods = visiblePods();
-  list.innerHTML = pods.map((pod) => {
-    const active = state.selected === keyOf(pod) ? " active" : "";
-    const inn = pod.ingressIsolated ? "on in" : "";
-    const eg = pod.egressIsolated ? "on eg" : "";
-    const ip = (pod.ips || [])[0] || t("noIp");
-    return `<button type="button" class="pod${active}" data-key="${esc(keyOf(pod))}">
-      <strong>${esc(pod.name)}</strong>
-      <span class="badges"><span class="badge ${inn}">in</span><span class="badge ${eg}">eg</span></span>
-      <span class="sub">${esc(pod.namespace)} · ${esc(ip)}</span>
+  $("pod-count").textContent = pods.length + " " + t("pods");
+  if (!pods.length) {
+    list.innerHTML = `<p class="side-empty">${esc(t("noPods"))}</p>`;
+    return;
+  }
+
+  const groups = [];
+  const byNS = new Map();
+  for (const pod of pods) {
+    let group = byNS.get(pod.namespace);
+    if (!group) {
+      group = { namespace: pod.namespace, pods: [] };
+      byNS.set(pod.namespace, group);
+      groups.push(group);
+    }
+    group.pods.push(pod);
+  }
+
+  list.innerHTML = groups.map(rosterGroup).join("");
+}
+
+function podFace(pod) {
+  const active = state.selected === keyOf(pod) ? " active" : "";
+  const ip = (pod.ips || [])[0] || t("noIp");
+  if (pod.ingressIsolated && pod.egressIsolated) return { active, ip, stateClass: "both", stateKey: "stateBoth" };
+  if (pod.ingressIsolated) return { active, ip, stateClass: "in", stateKey: "ingressClosed" };
+  if (pod.egressIsolated) return { active, ip, stateClass: "eg", stateKey: "egressClosed" };
+  return { active, ip, stateClass: "open", stateKey: "stateOpen" };
+}
+
+function rosterGroup(group) {
+  const cards = group.pods.map((pod) => {
+    const face = podFace(pod);
+    return `<button type="button" class="pod${face.active}" data-key="${esc(keyOf(pod))}">
+      <span class="pod-row">
+        <span class="pod-main">
+          <span class="pod-name">${esc(pod.name)}</span>
+          <span class="pod-sub">${esc(face.ip)}</span>
+        </span>
+        <span class="pod-state ${face.stateClass}">${esc(t(face.stateKey))}</span>
+      </span>
     </button>`;
-  }).join("") || `<p class="meta">${esc(t("noPods"))}</p>`;
+  }).join("");
+  return `<section class="ns-block">
+    <h2>${esc(group.namespace)}</h2>
+    <div class="roster">${cards}</div>
+  </section>`;
 }
 
 function fillPodSelects() {
@@ -243,8 +283,10 @@ async function selectPod(key) {
   renderPods();
   const ref = parseKey(key);
   if (!ref) return;
+  const opening = $("detail").classList.contains("hidden");
   $("empty").classList.add("hidden");
   $("detail").classList.remove("hidden");
+  if (opening) $("detail").scrollIntoView({ block: "start" });
   $("from").value = key;
   const explain = await api(`/api/pods/${encodeURIComponent(ref.namespace)}/${encodeURIComponent(ref.name)}`);
   renderExplain(explain);
@@ -309,6 +351,36 @@ async function loadGraph() {
   drawGraph(graph);
 }
 
+// Replica suffixes sit at the end. Keep that tail when the name is wider than the box.
+function fitGraphLabel(el, text, maxPx) {
+  const full = text || "";
+  el.textContent = full;
+  if (!full) return;
+
+  const px = (s) => {
+    el.textContent = s;
+    const measured = el.getComputedTextLength();
+    return measured > 0 ? measured : s.length * 7.8;
+  };
+  if (px(full) <= maxPx) return;
+
+  const ell = "…";
+  const tailLen = Math.min(7, full.length - 2);
+  const tail = tailLen > 0 ? full.slice(-tailLen) : "";
+  for (let n = full.length - tailLen - 1; n > 0; n--) {
+    const candidate = full.slice(0, n) + ell + tail;
+    if (px(candidate) <= maxPx) return;
+  }
+
+  let fitted = ell;
+  for (let n = 1; n < full.length; n++) {
+    const candidate = full.slice(0, n) + ell;
+    if (px(candidate) > maxPx) break;
+    fitted = candidate;
+  }
+  el.textContent = fitted;
+}
+
 function drawGraph(graph) {
   const svg = $("graph");
   svg.replaceChildren();
@@ -370,24 +442,27 @@ function drawGraph(graph) {
     box.setAttribute("rx", 7);
     box.setAttribute("class", "node" + (node.focus ? " focus" : "") + (node.kind === "cidr" ? " cidr" : ""));
     g.appendChild(box);
+    const tip = document.createElementNS(ns, "title");
+    tip.textContent = node.namespace ? node.namespace + "/" + node.name : node.name;
+    g.appendChild(tip);
+    svg.appendChild(g);
     const label = document.createElementNS(ns, "text");
     label.setAttribute("class", "label");
     label.setAttribute("text-anchor", "middle");
     label.setAttribute("y", node.namespace && !node.focus ? -1 : 4);
     label.setAttribute("font-size", "12");
     label.setAttribute("font-family", "ui-monospace, Menlo, Consolas, monospace");
-    label.textContent = node.name;
     g.appendChild(label);
+    fitGraphLabel(label, node.name, w - 18);
     if (node.namespace && !node.focus) {
       const sub = document.createElementNS(ns, "text");
       sub.setAttribute("class", "sub");
       sub.setAttribute("text-anchor", "middle");
       sub.setAttribute("y", 13);
       sub.setAttribute("font-size", "10");
-      sub.textContent = node.namespace;
       g.appendChild(sub);
+      fitGraphLabel(sub, node.namespace, w - 18);
     }
-    svg.appendChild(g);
   }
 }
 

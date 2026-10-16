@@ -42,22 +42,24 @@
     </div>
   </header>
 
-  <div class="layout">
-    <aside>
-      <label>
-        <span data-i18n="namespace">Namespace</span>
-        <select id="ns">
-          <option value="">all</option>
-        </select>
-      </label>
-      <label>
-        <span data-i18n="filter">Filter</span>
-        <input id="q" type="search" data-i18n-placeholder="filterPlaceholder" placeholder="name or label" autocomplete="off">
-      </label>
-      <div id="pods" class="pod-list"></div>
-    </aside>
+  <main>
+      <div class="browser">
+        <div class="browser-tools">
+          <label class="ns-field">
+            <span data-i18n="namespace">Namespace</span>
+            <select id="ns">
+              <option value="">all</option>
+            </select>
+          </label>
+          <label class="find-field">
+            <span data-i18n="filter">Filter</span>
+            <input id="q" type="search" data-i18n-placeholder="filterPlaceholder" placeholder="name or label" autocomplete="off">
+          </label>
+          <p id="pod-count" class="side-count"></p>
+        </div>
+        <div id="pods"></div>
+      </div>
 
-    <main>
       <section id="empty" class="panel empty" data-i18n="empty">
         Pick a pod to see which NetworkPolicies isolate it and to simulate a flow.
       </section>
@@ -127,8 +129,7 @@
           <p class="legend"><span class="swatch ok"></span> <span data-i18n="allowedEdge">allowed</span> <span class="swatch no"></span> <span data-i18n="deniedEdge">denied</span> <span class="swatch cidr"></span> ipBlock</p>
         </section>
       </div>
-    </main>
-  </div>
+  </main>
   <script src="/static/app.js"></script>
 </body>
 </html>
