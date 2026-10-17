@@ -69,6 +69,9 @@ header {
   background: var(--bg);
 }
 
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.logo { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; flex: none; }
+
 h1, h2 { margin: 0; font-weight: 620; }
 h1 { font-size: 20px; letter-spacing: -0.02em; }
 h2 { font-size: 16px; }
