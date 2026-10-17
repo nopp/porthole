@@ -286,7 +286,11 @@ async function selectPod(key) {
   const opening = $("detail").classList.contains("hidden");
   $("empty").classList.add("hidden");
   $("detail").classList.remove("hidden");
-  if (opening) $("detail").scrollIntoView({ block: "start" });
+  if (opening) {
+    const header = document.querySelector("header").offsetHeight;
+    const top = $("detail").getBoundingClientRect().top + window.scrollY - header;
+    window.scrollTo({ top: Math.max(0, top) });
+  }
   $("from").value = key;
   const explain = await api(`/api/pods/${encodeURIComponent(ref.namespace)}/${encodeURIComponent(ref.name)}`);
   renderExplain(explain);

@@ -64,6 +64,9 @@ header {
   gap: 16px;
   align-items: flex-end;
   flex: none;
+  position: sticky;
+  top: 0;
+  z-index: 2;
   padding: 16px 20px 12px;
   border-bottom: 1px solid var(--line);
   background: var(--bg);
