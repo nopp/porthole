@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: porthole
+  namespace: porthole
+  labels:
+    app: porthole
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: porthole
+  template:
+    metadata:
+      labels:
+        app: porthole
+    spec:
+      containers:
+      - name: porthole
+        image: ghcr.io/nopp/porthole:v0.0.2
+        resources: {}
