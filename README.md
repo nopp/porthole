@@ -183,6 +183,13 @@ kubectl delete -f deploy/porthole.yaml
 
 The ClusterRole and ClusterRoleBinding go with it because they are in the same file. On a large cluster the full pod list stays in memory; the container limit is 256Mi.
 
+## Screenshots
+
+<p align="center">
+  <img src=".img/allow.png" width="49%">
+  <img src=".img/denny.png" width="49%">
+</p>
+
 ## Limits
 
 It does not evaluate CiliumNetworkPolicy, Calico GlobalNetworkPolicy, AdminNetworkPolicy, or BaselineAdminNetworkPolicy. It does not understand FQDN, L7, or identity. It does not prove that the installed CNI actually enforces what the API says.
