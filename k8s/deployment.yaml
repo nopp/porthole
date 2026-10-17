@@ -17,5 +17,5 @@ spec:
     spec:
       containers:
       - name: porthole
-        image: ghcr.io/nopp/porthole:v0.0.2
+        image: ghcr.io/nopp/porthole:v0.0.1
         resources: {}
