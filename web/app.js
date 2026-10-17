@@ -3,6 +3,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   pods: [],
   selected: null,
+  booted: false,
   lang: "en",
   theme: "dark",
   checkPayload: null,
@@ -18,10 +19,7 @@ const I18N = {
     themeLight: "Claro",
     refresh: "Atualizar",
     namespace: "Namespace",
-    filter: "Filtrar",
-    filterPlaceholder: "nome ou label",
-    allNamespaces: "todos",
-    empty: "Escolha um pod para ver quais NetworkPolicies o isolam e para simular um fluxo.",
+    pod: "Pod",
     colPolicy: "Policy",
     colSelects: "Seleciona",
     colIsolates: "Isola",
@@ -39,7 +37,6 @@ const I18N = {
     allowedEdge: "permitido",
     deniedEdge: "negado",
     noPods: "Nenhum pod.",
-    noIp: "sem IP",
     yes: "sim",
     no: "não",
     noPolicies: "Nenhuma NetworkPolicy neste namespace.",
@@ -51,8 +48,6 @@ const I18N = {
     denied: "Negado",
     isolated: "isolado",
     notIsolated: "não isolado",
-    stateOpen: "Aberto",
-    stateBoth: "Ingress e egress isolados",
     error: "Erro",
     pickTarget: "Escolha um pod de destino ou informe um IP.",
     pods: "pods",
@@ -68,10 +63,7 @@ const I18N = {
     themeLight: "Light",
     refresh: "Refresh",
     namespace: "Namespace",
-    filter: "Filter",
-    filterPlaceholder: "name or label",
-    allNamespaces: "all",
-    empty: "Pick a pod to see which NetworkPolicies isolate it and to simulate a flow.",
+    pod: "Pod",
     colPolicy: "Policy",
     colSelects: "Selects",
     colIsolates: "Isolates",
@@ -89,7 +81,6 @@ const I18N = {
     allowedEdge: "allowed",
     deniedEdge: "denied",
     noPods: "No pods.",
-    noIp: "no IP",
     yes: "yes",
     no: "no",
     noPolicies: "No NetworkPolicy in this namespace.",
@@ -101,8 +92,6 @@ const I18N = {
     denied: "Denied",
     isolated: "isolated",
     notIsolated: "not isolated",
-    stateOpen: "Open",
-    stateBoth: "Ingress and egress isolated",
     error: "Error",
     pickTarget: "Choose a destination pod or enter an IP.",
     pods: "pods",
@@ -193,112 +182,75 @@ async function loadAll() {
   const err = meta.refreshError ? " · " + t("errorWord") + ": " + meta.refreshError : "";
   $("meta").textContent = `${meta.source || "snapshot"} · ${meta.namespaces || 0} ns · ${meta.pods || 0} ${t("pods")} · ${meta.policies || 0} ${t("policies")} · ${when}${err}`;
 
-  const ns = $("ns");
-  const current = ns.value;
-  ns.innerHTML = `<option value="">${esc(t("allNamespaces"))}</option>` + namespaces.map((n) =>
-    `<option value="${esc(n.name)}">${esc(n.name)}</option>`).join("");
-  if ([...ns.options].some((o) => o.value === current)) ns.value = current;
-  renderPods();
-  fillPodSelects();
+  const names = namespaces.map((n) => n.name);
+  const fromNS = $("from-ns").value;
+  const toNS = $("to-ns").value;
+  const fromPod = state.booted ? $("from").value : null;
+  const toPod = state.booted ? $("to").value : null;
+  fillNamespaceSelect($("from-ns"), names, fromNS);
+  fillNamespaceSelect($("to-ns"), names, toNS || fromNS);
+  fillPodSelect($("from"), $("from-ns").value, fromPod, false);
+  fillPodSelect($("to"), $("to-ns").value, toPod, true);
+  if (!state.booted) preferAnotherTarget();
+  state.booted = true;
+
+  const hasPods = state.pods.length > 0 && $("from").value;
+  $("detail").classList.toggle("hidden", !hasPods);
+  $("none").classList.toggle("hidden", hasPods);
+  if (hasPods) await showFrom();
 }
 
-function visiblePods() {
-  const ns = $("ns").value;
-  const q = $("q").value.trim().toLowerCase();
-  return state.pods.filter((pod) => {
-    if (ns && pod.namespace !== ns) return false;
-    if (!q) return true;
-    const blob = (keyOf(pod) + " " + labelsOf(pod.labels) + " " + (pod.ips || []).join(" ")).toLowerCase();
-    return blob.includes(q);
-  });
+function fillNamespaceSelect(select, names, preferred) {
+  select.innerHTML = names.map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("");
+  if (preferred && [...select.options].some((o) => o.value === preferred)) select.value = preferred;
 }
 
-function renderPods() {
-  const list = $("pods");
-  const pods = visiblePods();
-  $("pod-count").textContent = pods.length + " " + t("pods");
-  if (!pods.length) {
-    list.innerHTML = `<p class="side-empty">${esc(t("noPods"))}</p>`;
+function fillPodSelect(select, namespace, preferred, allowEmpty) {
+  const pods = state.pods.filter((pod) => pod.namespace === namespace);
+  const opts = pods.map((pod) => `<option value="${esc(keyOf(pod))}">${esc(pod.name)}</option>`).join("");
+  select.innerHTML = (allowEmpty ? `<option value="">—</option>` : "") + opts;
+  if (!opts && !allowEmpty) {
+    select.innerHTML = `<option value="">${esc(t("noPods"))}</option>`;
     return;
   }
-
-  const groups = [];
-  const byNS = new Map();
-  for (const pod of pods) {
-    let group = byNS.get(pod.namespace);
-    if (!group) {
-      group = { namespace: pod.namespace, pods: [] };
-      byNS.set(pod.namespace, group);
-      groups.push(group);
-    }
-    group.pods.push(pod);
+  if (preferred != null && [...select.options].some((o) => o.value === preferred)) {
+    select.value = preferred;
+    return;
   }
-
-  list.innerHTML = groups.map(rosterGroup).join("");
+  const first = [...select.options].find((o) => o.value);
+  select.value = first ? first.value : "";
 }
 
-function podFace(pod) {
-  const active = state.selected === keyOf(pod) ? " active" : "";
-  const ip = (pod.ips || [])[0] || t("noIp");
-  if (pod.ingressIsolated && pod.egressIsolated) return { active, ip, stateClass: "both", stateKey: "stateBoth" };
-  if (pod.ingressIsolated) return { active, ip, stateClass: "in", stateKey: "ingressClosed" };
-  if (pod.egressIsolated) return { active, ip, stateClass: "eg", stateKey: "egressClosed" };
-  return { active, ip, stateClass: "open", stateKey: "stateOpen" };
+function preferAnotherTarget() {
+  const other = [...$("to").options].find((o) => o.value && o.value !== $("from").value);
+  if (other) $("to").value = other.value;
 }
 
-function rosterGroup(group) {
-  const cards = group.pods.map((pod) => {
-    const face = podFace(pod);
-    return `<button type="button" class="pod${face.active}" data-key="${esc(keyOf(pod))}">
-      <span class="pod-row">
-        <span class="pod-main">
-          <span class="pod-name">${esc(pod.name)}</span>
-          <span class="pod-sub">${esc(face.ip)}</span>
-        </span>
-        <span class="pod-state ${face.stateClass}">${esc(t(face.stateKey))}</span>
-      </span>
-    </button>`;
-  }).join("");
-  return `<section class="ns-block">
-    <h2>${esc(group.namespace)}</h2>
-    <div class="roster">${cards}</div>
-  </section>`;
+function hasTarget() {
+  return Boolean($("to-ip").value.trim() || $("to").value);
 }
 
-function fillPodSelects() {
-  const options = state.pods.map((pod) =>
-    `<option value="${esc(keyOf(pod))}">${esc(keyOf(pod))}</option>`).join("");
-  const from = $("from");
-  const to = $("to");
-  const fromVal = from.value;
-  const toVal = to.value;
-  from.innerHTML = options;
-  to.innerHTML = '<option value="">—</option>' + options;
-  if (fromVal) from.value = fromVal;
-  if (toVal) to.value = toVal;
+async function chooseFrom(namespace, name) {
+  $("from-ns").value = namespace;
+  fillPodSelect($("from"), namespace, namespace + "/" + name, false);
+  await showFrom();
 }
 
-async function selectPod(key) {
-  state.selected = key;
-  renderPods();
+async function showFrom() {
+  const key = $("from").value;
   const ref = parseKey(key);
   if (!ref) return;
-  const opening = $("detail").classList.contains("hidden");
-  $("empty").classList.add("hidden");
-  $("detail").classList.remove("hidden");
-  if (opening) {
-    const header = document.querySelector("header").offsetHeight;
-    const top = $("detail").getBoundingClientRect().top + window.scrollY - header;
-    window.scrollTo({ top: Math.max(0, top) });
-  }
-  $("from").value = key;
+  const changed = state.selected !== key;
+  state.selected = key;
   const explain = await api(`/api/pods/${encodeURIComponent(ref.namespace)}/${encodeURIComponent(ref.name)}`);
   renderExplain(explain);
-  if (explain.ports && explain.ports.length === 1) {
+  if (changed && explain.ports && explain.ports.length === 1) {
     $("port").value = explain.ports[0].port;
     $("protocol").value = explain.ports[0].protocol || "TCP";
   }
   await loadGraph();
+  if (hasTarget()) await runCheck();
+  else $("verdict").classList.add("hidden");
 }
 
 function renderExplain(ex) {
@@ -347,6 +299,14 @@ async function loadGraph() {
     protocol: $("protocol").value,
     port: $("port").value || "80",
   });
+  const ip = $("to-ip").value.trim();
+  const to = parseKey($("to").value);
+  if (ip) {
+    params.set("toIP", ip);
+  } else if (to) {
+    params.set("toNamespace", to.namespace);
+    params.set("toPod", to.name);
+  }
   const graph = await api("/api/graph?" + params.toString());
   $("graph-notes").textContent = [
     graph.protocol + "/" + graph.port,
@@ -435,14 +395,16 @@ function drawGraph(graph) {
     g.setAttribute("transform", `translate(${p.x}, ${p.y})`);
     if (node.kind === "pod") {
       g.style.cursor = "pointer";
-      g.addEventListener("click", () => selectPod(node.namespace + "/" + node.name).catch(showError));
+      g.addEventListener("click", () => chooseFrom(node.namespace, node.name).catch(showError));
     }
     const box = document.createElementNS(ns, "rect");
     const w = node.kind === "cidr" ? 150 : 124;
+    const showPort = !node.focus && graph.port;
+    const h = showPort ? 50 : 36;
     box.setAttribute("x", -w / 2);
-    box.setAttribute("y", -18);
+    box.setAttribute("y", showPort ? -25 : -18);
     box.setAttribute("width", w);
-    box.setAttribute("height", 36);
+    box.setAttribute("height", h);
     box.setAttribute("rx", 7);
     box.setAttribute("class", "node" + (node.focus ? " focus" : "") + (node.kind === "cidr" ? " cidr" : ""));
     g.appendChild(box);
@@ -453,19 +415,29 @@ function drawGraph(graph) {
     const label = document.createElementNS(ns, "text");
     label.setAttribute("class", "label");
     label.setAttribute("text-anchor", "middle");
-    label.setAttribute("y", node.namespace && !node.focus ? -1 : 4);
+    label.setAttribute("y", node.namespace ? (showPort ? -10 : -1) : (showPort ? -4 : 4));
     label.setAttribute("font-size", "12");
     label.setAttribute("font-family", "ui-monospace, Menlo, Consolas, monospace");
     g.appendChild(label);
     fitGraphLabel(label, node.name, w - 18);
-    if (node.namespace && !node.focus) {
+    if (node.namespace) {
       const sub = document.createElementNS(ns, "text");
       sub.setAttribute("class", "sub");
       sub.setAttribute("text-anchor", "middle");
-      sub.setAttribute("y", 13);
+      sub.setAttribute("y", showPort ? 4 : 13);
       sub.setAttribute("font-size", "10");
       g.appendChild(sub);
       fitGraphLabel(sub, node.namespace, w - 18);
+    }
+    if (showPort) {
+      const port = document.createElementNS(ns, "text");
+      port.setAttribute("class", "sub");
+      port.setAttribute("text-anchor", "middle");
+      port.setAttribute("y", 18);
+      port.setAttribute("font-size", "10");
+      port.setAttribute("font-family", "ui-monospace, Menlo, Consolas, monospace");
+      g.appendChild(port);
+      fitGraphLabel(port, (graph.protocol || "TCP") + "/" + graph.port, w - 18);
     }
   }
 }
@@ -509,7 +481,7 @@ function showError(err) {
 }
 
 async function runCheck(event) {
-  event.preventDefault();
+  if (event) event.preventDefault();
   const payload = {
     protocol: $("protocol").value,
     port: Number($("port").value),
@@ -531,7 +503,6 @@ async function runCheck(event) {
     body: JSON.stringify(payload),
   });
   renderVerdict(res);
-  await loadGraph();
 }
 
 function renderVerdict(res) {
@@ -556,20 +527,29 @@ function renderSide(side) {
   </div>`;
 }
 
-$("pods").addEventListener("click", (event) => {
-  const btn = event.target.closest(".pod");
-  if (!btn) return;
-  selectPod(btn.dataset.key).catch(showError);
+$("from-ns").addEventListener("change", () => {
+  fillPodSelect($("from"), $("from-ns").value, null, false);
+  showFrom().catch(showError);
 });
-
-$("ns").addEventListener("change", renderPods);
-$("q").addEventListener("input", renderPods);
+$("from").addEventListener("change", () => showFrom().catch(showError));
+$("to-ns").addEventListener("change", () => {
+  fillPodSelect($("to"), $("to-ns").value, null, true);
+  preferAnotherTarget();
+  refreshFlow().catch(showError);
+});
+function refreshFlow() {
+  const jobs = [loadGraph()];
+  if (hasTarget()) jobs.push(runCheck());
+  else $("verdict").classList.add("hidden");
+  return Promise.all(jobs);
+}
+$("to").addEventListener("change", () => refreshFlow().catch(showError));
+$("to-ip").addEventListener("change", () => refreshFlow().catch(showError));
 $("refresh").addEventListener("click", async () => {
   $("refresh").disabled = true;
   try {
     await api("/api/refresh", { method: "POST" });
     await loadAll();
-    if (state.selected) await selectPod(state.selected);
   } catch (err) {
     showError(err);
   } finally {
@@ -577,10 +557,11 @@ $("refresh").addEventListener("click", async () => {
   }
 });
 $("sim").addEventListener("submit", (event) => {
-  runCheck(event).catch(showError);
+  event.preventDefault();
+  refreshFlow().catch(showError);
 });
-$("protocol").addEventListener("change", () => loadGraph().catch(showError));
-$("port").addEventListener("change", () => loadGraph().catch(showError));
+$("protocol").addEventListener("change", () => refreshFlow().catch(showError));
+$("port").addEventListener("change", () => refreshFlow().catch(showError));
 
 $("lang").addEventListener("change", async () => {
   state.lang = $("lang").value === "en" ? "en" : "pt-BR";
@@ -588,15 +569,6 @@ $("lang").addEventListener("change", async () => {
   applyI18n();
   try {
     await loadAll();
-    if (state.selected) await selectPod(state.selected);
-    if (state.checkPayload) {
-      const res = await api("/api/check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(state.checkPayload),
-      });
-      renderVerdict(res);
-    }
   } catch (err) {
     showError(err);
   }

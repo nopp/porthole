@@ -46,29 +46,52 @@
   </header>
 
   <main>
-      <div class="browser">
-        <div class="browser-tools">
-          <label class="ns-field">
-            <span data-i18n="namespace">Namespace</span>
-            <select id="ns">
-              <option value="">all</option>
-            </select>
-          </label>
-          <label class="find-field">
-            <span data-i18n="filter">Filter</span>
-            <input id="q" type="search" data-i18n-placeholder="filterPlaceholder" placeholder="name or label" autocomplete="off">
-          </label>
-          <p id="pod-count" class="side-count"></p>
-        </div>
-        <div id="pods"></div>
-      </div>
-
-      <section id="empty" class="panel empty" data-i18n="empty">
-        Pick a pod to see which NetworkPolicies isolate it and to simulate a flow.
-      </section>
+      <section id="none" class="panel empty hidden" data-i18n="noPods">No pods.</section>
 
       <div id="detail" class="stack hidden">
         <section class="panel">
+          <h2 data-i18n="simTitle">Can pod A reach pod B?</h2>
+          <form id="sim" class="sim">
+            <div class="pair">
+              <p class="pair-kicker" data-i18n="from">From</p>
+              <label>
+                <span data-i18n="namespace">Namespace</span>
+                <select id="from-ns"></select>
+              </label>
+              <label>
+                <span data-i18n="pod">Pod</span>
+                <select id="from"></select>
+              </label>
+            </div>
+            <div class="pair">
+              <p class="pair-kicker" data-i18n="to">To</p>
+              <label>
+                <span data-i18n="namespace">Namespace</span>
+                <select id="to-ns"></select>
+              </label>
+              <label>
+                <span data-i18n="pod">Pod</span>
+                <select id="to"></select>
+              </label>
+            </div>
+            <label><span data-i18n="orIp">or IP</span>
+              <input id="to-ip" placeholder="10.1.0.5" autocomplete="off">
+            </label>
+            <label><span data-i18n="protocol">Protocol</span>
+              <select id="protocol">
+                <option>TCP</option>
+                <option>UDP</option>
+                <option>SCTP</option>
+              </select>
+            </label>
+            <label><span data-i18n="port">Port</span>
+              <input id="port" type="number" min="1" max="65535" value="8080">
+            </label>
+            <button type="submit" data-i18n="simulate">Simulate</button>
+          </form>
+        </section>
+
+        <section class="panel" id="explain">
           <div class="pod-head">
             <div>
               <h2 id="pod-title"></h2>
@@ -96,34 +119,9 @@
           </div>
         </section>
 
-        <section class="panel">
-          <h2 data-i18n="simTitle">Can pod A reach pod B?</h2>
-          <form id="sim" class="sim">
-            <label><span data-i18n="from">From</span>
-              <select id="from"></select>
-            </label>
-            <label><span data-i18n="to">To</span>
-              <select id="to"></select>
-            </label>
-            <label><span data-i18n="orIp">or IP</span>
-              <input id="to-ip" placeholder="10.1.0.5" autocomplete="off">
-            </label>
-            <label><span data-i18n="protocol">Protocol</span>
-              <select id="protocol">
-                <option>TCP</option>
-                <option>UDP</option>
-                <option>SCTP</option>
-              </select>
-            </label>
-            <label><span data-i18n="port">Port</span>
-              <input id="port" type="number" min="1" max="65535" value="8080">
-            </label>
-            <button type="submit" data-i18n="simulate">Simulate</button>
-          </form>
-          <div id="verdict" class="verdict hidden"></div>
-        </section>
+        <section id="verdict" class="panel verdict hidden"></section>
 
-        <section class="panel">
+        <section class="panel" id="graph-panel">
           <div class="pod-head">
             <h2 data-i18n="graphTitle">Pod graph</h2>
             <p id="graph-notes" class="meta"></p>

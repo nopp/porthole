@@ -361,9 +361,10 @@ func sideAllowed(s *Side) bool {
 	return s == nil || s.Allowed
 }
 
-// Graph draws the focus pod, pods in its namespace, pods in namespaces
+// Graph draws the focus pod. A peer pod or peer IP draws that flow.
+// With neither, it draws pods in the focus namespace, pods in namespaces
 // cited by a non-universal namespaceSelector, and ipBlocks on its policies.
-func (idx Index) Graph(namespace, name, protocol string, port int32) (Graph, error) {
+func (idx Index) Graph(namespace, name, protocol string, port int32, peer PodRef, peerIP string) (Graph, error) {
 	proto, err := idx.normalizeProtocol(protocol)
 	if err != nil {
 		return Graph{}, err
@@ -391,6 +392,13 @@ func (idx Index) Graph(namespace, name, protocol string, port int32) (Graph, err
 		IPs:       focus.IPs,
 		Focus:     true,
 	})
+
+	if peerIP != "" || !peer.empty() {
+		if err := idx.addChosenPeer(&g, focus, peer, peerIP, proto, port); err != nil {
+			return Graph{}, err
+		}
+		return g, nil
+	}
 
 	peers, truncated, notes := idx.graphPeers(focus)
 	g.Truncated = truncated
@@ -424,6 +432,42 @@ func (idx Index) Graph(namespace, name, protocol string, port int32) (Graph, err
 		idx.addCIDREdges(&g, focus, pol, model.Ingress, proto, port, seenCIDR)
 	}
 	return g, nil
+}
+
+func (idx Index) addChosenPeer(g *Graph, focus model.Pod, peer PodRef, peerIP, proto string, port int32) error {
+	if peerIP != "" {
+		id := "ip:" + peerIP
+		g.Nodes = append(g.Nodes, GraphNode{ID: id, Kind: "cidr", Name: peerIP})
+		res, err := idx.Check(Query{From: podRef(focus), ToIP: peerIP, Protocol: proto, Port: port})
+		if err != nil {
+			return err
+		}
+		g.Edges = append(g.Edges, GraphEdge{From: focus.Key(), To: id, Allowed: res.Allowed, Reason: res.Summary})
+		return nil
+	}
+	if peer.Namespace == "" || peer.Name == "" {
+		return badQuery(idx.tr("informe namespace e nome do pod de destino", "set both the destination namespace and pod name"))
+	}
+	other, ok := idx.podByKey[peer.key()]
+	if !ok {
+		return notFound(idx.tr("pod %s não encontrado", "pod %s not found"), peer.key())
+	}
+	if other.Key() == focus.Key() {
+		return nil
+	}
+	g.Nodes = append(g.Nodes, GraphNode{
+		ID:        other.Key(),
+		Kind:      "pod",
+		Namespace: other.Namespace,
+		Name:      other.Name,
+		IPs:       other.IPs,
+	})
+	out, err := idx.Check(Query{From: podRef(focus), To: podRef(other), Protocol: proto, Port: port})
+	if err != nil {
+		return err
+	}
+	g.Edges = append(g.Edges, GraphEdge{From: focus.Key(), To: other.Key(), Allowed: out.Allowed, Reason: out.Summary})
+	return nil
 }
 
 func (idx Index) graphPeers(focus model.Pod) (peers []model.Pod, truncated bool, notes []string) {

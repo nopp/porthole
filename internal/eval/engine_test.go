@@ -462,7 +462,7 @@ func TestGraphMarksAllowAndDeny(t *testing.T) {
 		Peers: []model.Peer{{PodSelector: selPtr("app", "api")}},
 		Ports: []model.Port{port("TCP", 8080)},
 	}}, nil)
-	g, err := NewIndex(baseSnap(pol)).Graph("app", "web", "TCP", 8080)
+	g, err := NewIndex(baseSnap(pol)).Graph("app", "web", "TCP", 8080, PodRef{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,6 +481,56 @@ func TestGraphMarksAllowAndDeny(t *testing.T) {
 	}
 	if freeToWeb == nil || freeToWeb.Allowed {
 		t.Fatalf("free → web should be denied: %+v", g.Edges)
+	}
+}
+
+func TestGraphFollowsSelectedPeer(t *testing.T) {
+	allowEgress := policy("allow", "app-a-egress", labels("app", "app-a"), []model.Direction{model.Egress}, nil, []model.Rule{{
+		Peers: []model.Peer{{PodSelector: selPtr("app", "app-b")}},
+		Ports: []model.Port{port("TCP", 8080)},
+	}})
+	allowIngress := policy("allow", "app-b-ingress", labels("app", "app-b"), []model.Direction{model.Ingress}, []model.Rule{{
+		Peers: []model.Peer{{PodSelector: selPtr("app", "app-a")}},
+		Ports: []model.Port{port("TCP", 8080)},
+	}}, nil)
+	denyEgress := policy("deny", "app-a-egress-deny", labels("app", "app-a"), []model.Direction{model.Egress}, nil, []model.Rule{})
+	denyIngress := policy("deny", "app-b-ingress-deny", labels("app", "app-b"), []model.Direction{model.Ingress}, []model.Rule{}, nil)
+	snap := model.Snapshot{
+		Namespaces: []model.Namespace{{Name: "allow"}, {Name: "deny"}},
+		Pods: []model.Pod{
+			pod("allow", "app-a", labels("app", "app-a"), "10.0.1.1"),
+			pod("allow", "app-b", labels("app", "app-b"), "10.0.1.2"),
+			pod("deny", "app-a", labels("app", "app-a"), "10.0.2.1"),
+			pod("deny", "app-b", labels("app", "app-b"), "10.0.2.2"),
+		},
+		Policies: []model.Policy{allowEgress, allowIngress, denyEgress, denyIngress},
+	}
+	idx := NewIndex(snap)
+	idx.Lang = "en"
+
+	g, err := idx.Graph("allow", "app-a", "TCP", 8080, PodRef{Namespace: "deny", Name: "app-b"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.Nodes) != 2 {
+		t.Fatalf("selected peer only: %+v", g.Nodes)
+	}
+	if len(g.Edges) != 1 || g.Edges[0].From != "allow/app-a" || g.Edges[0].To != "deny/app-b" || g.Edges[0].Allowed {
+		t.Fatalf("allow/app-a → deny/app-b must be the only edge, and denied: %+v", g.Edges)
+	}
+
+	same, err := idx.Graph("allow", "app-a", "TCP", 8080, PodRef{Namespace: "allow", Name: "app-b"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var allowed bool
+	for _, e := range same.Edges {
+		if e.From == "allow/app-a" && e.To == "allow/app-b" {
+			allowed = e.Allowed
+		}
+	}
+	if !allowed {
+		t.Fatalf("allow/app-a → allow/app-b must be allowed: %+v", same.Edges)
 	}
 }
 

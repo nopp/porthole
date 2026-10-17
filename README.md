@@ -79,10 +79,10 @@ The same steps are in `examples/README.md`.
 ## What the screen shows
 
 - English or Portuguese, and a light or dark theme. The choice stays in the browser.
-- Pods grouped by namespace. Each row shows the IP and whether ingress, egress, or both are isolated.
+- Namespace and pod for each side of the flow. Policies for pod A sit under the selectors, then the A → B verdict and the reachability graph.
 - A table of NetworkPolicies in the namespace: whether they select the pod, which direction they isolate, the text of each rule, and a warning when `policyTypes` was omitted.
 - An A → B or A → IP simulation.
-- A graph of the focused pod on the chosen port. Green is allowed, dashed red is denied. `ipBlock` entries appear as nodes. The graph stays in the pod’s namespace and in namespaces named by a `namespaceSelector` that is not “all”.
+- A graph of the selected flow on the chosen port. The arrow from pod A to pod B uses the same verdict as the check: green is allowed, dashed red is denied. With no destination, the graph stays in the pod’s namespace and in namespaces named by a `namespaceSelector` that is not “all”. `ipBlock` entries appear as nodes.
 
 ## Semantics
 
@@ -97,7 +97,40 @@ A pod is isolated in a direction when some policy in the namespace selects it an
 
 ## Install on a Kubernetes cluster
 
-`deploy/porthole.yaml` creates the `porthole` namespace, a ServiceAccount, a read-only ClusterRole, the Deployment, and a ClusterIP Service. The account reads `pods`, `namespaces`, and `networkpolicies` (`get`, `list`, `watch`). It does not create or change policy.
+Inside the cluster, Porthole does not use your kubeconfig. The pod authenticates as a ServiceAccount, and that account is the only identity the UI uses to read the API.
+
+`deploy/porthole.yaml` creates:
+
+- Namespace `porthole`.
+- ServiceAccount `porthole` in that namespace.
+- ClusterRole `porthole`.
+- ClusterRoleBinding `porthole`, which grants that ClusterRole to the ServiceAccount.
+- Deployment `porthole`, with `serviceAccountName: porthole` and `automountServiceAccountToken: true`, so the token is mounted and the in-cluster client can use it.
+- ClusterIP Service `porthole`.
+
+### Service account and RBAC
+
+The ClusterRole is read-only and cluster-wide. On each reload the process lists every namespace, every pod, and every `networking.k8s.io/v1` NetworkPolicy. A Role in the `porthole` namespace cannot do that: Namespace is not a namespaced object, and pods and policies in other namespaces would be invisible. `namespaceSelector` needs the labels on those namespaces.
+
+```yaml
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
+```
+
+| Resource | What it is read for |
+| --- | --- |
+| `pods` | Name, namespace, labels, pod IP, container ports, phase, and `hostNetwork`. |
+| `namespaces` | Name and labels, so a `namespaceSelector` can be matched. |
+| `networkpolicies` | `podSelector`, `policyTypes`, and the ingress and egress rules. |
+
+`get`, `list`, and `watch` are the only verbs. There is no `create`, `update`, `patch`, or `delete`. The role does not grant secrets, configmaps, or any other API group. The process reloads by listing those three resources. It does not write policy.
+
+Running `porthole check` or `porthole explain` on your machine does not use this ServiceAccount. Without `--manifests`, the binary uses the current kubeconfig. The Deployment is only the UI inside the cluster.
 
 You need `kubectl` pointed at the cluster and permission to create those objects, including the ClusterRole. The manifest image is `porthole:dev` with `imagePullPolicy: IfNotPresent`, so the node needs that tag locally, or you change the name to an image in a registry.
 
@@ -149,8 +182,6 @@ kubectl delete -f deploy/porthole.yaml
 ```
 
 The ClusterRole and ClusterRoleBinding go with it because they are in the same file. On a large cluster the full pod list stays in memory; the container limit is 256Mi.
-
-Running `porthole check` or `porthole explain` on your machine does not need this Deployment. Without `--manifests`, the binary uses the current kubeconfig. The Deployment is the UI inside the cluster.
 
 ## Limits
 

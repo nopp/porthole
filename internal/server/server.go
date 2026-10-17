@@ -301,7 +301,10 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 	} else {
 		port = 80
 	}
-	g, err := idx.Graph(q.Get("namespace"), q.Get("pod"), q.Get("protocol"), port)
+	g, err := idx.Graph(q.Get("namespace"), q.Get("pod"), q.Get("protocol"), port, eval.PodRef{
+		Namespace: q.Get("toNamespace"),
+		Name:      q.Get("toPod"),
+	}, q.Get("toIP"))
 	if err != nil {
 		writeQueryErr(w, err)
 		return
