@@ -18,5 +18,5 @@ spec:
       serviceAccountName: porthole
       containers:
       - name: porthole
-        image: ghcr.io/nopp/porthole:0.0.1
+        image: ghcr.io/nopp/porthole:0.0.2
         resources: {}
