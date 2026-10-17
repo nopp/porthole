@@ -15,6 +15,7 @@ spec:
       labels:
         app: porthole
     spec:
+      serviceAccountName: porthole
       containers:
       - name: porthole
         image: ghcr.io/nopp/porthole:0.0.1
