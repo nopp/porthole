@@ -1,7 +1,9 @@
 package eval
 
 import (
+	"cmp"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -13,8 +15,7 @@ import (
 // NotIn and DoesNotExist match when the key is absent. In and Exists do not.
 func Matches(sel model.LabelSelector, labels map[string]string) bool {
 	for k, want := range sel.MatchLabels {
-		got, ok := lookup(labels, k)
-		if !ok || got != want {
+		if got, ok := labels[k]; !ok || got != want {
 			return false
 		}
 	}
@@ -32,28 +33,12 @@ func Universal(sel model.LabelSelector) bool {
 }
 
 func matchExpr(exp model.LabelExpression, labels map[string]string) bool {
-	got, ok := lookup(labels, exp.Key)
+	got, ok := labels[exp.Key]
 	switch exp.Operator {
 	case "In":
-		if !ok {
-			return false
-		}
-		for _, v := range exp.Values {
-			if got == v {
-				return true
-			}
-		}
-		return false
+		return ok && slices.Contains(exp.Values, got)
 	case "NotIn":
-		if !ok {
-			return true
-		}
-		for _, v := range exp.Values {
-			if got == v {
-				return false
-			}
-		}
-		return true
+		return !ok || !slices.Contains(exp.Values, got)
 	case "Exists":
 		return ok
 	case "DoesNotExist":
@@ -76,14 +61,6 @@ func matchExpr(exp model.LabelExpression, labels map[string]string) bool {
 	}
 }
 
-func lookup(labels map[string]string, key string) (string, bool) {
-	if labels == nil {
-		return "", false
-	}
-	v, ok := labels[key]
-	return v, ok
-}
-
 // IPInBlock reports whether ip is inside the CIDR and outside every except range.
 func IPInBlock(ip string, block model.IPBlock) bool {
 	addr, err := netip.ParseAddr(ip)
@@ -91,18 +68,11 @@ func IPInBlock(ip string, block model.IPBlock) bool {
 		return false
 	}
 	prefix, err := netip.ParsePrefix(block.CIDR)
-	if err != nil {
-		return false
-	}
-	if !prefix.Contains(addr) {
+	if err != nil || !prefix.Contains(addr) {
 		return false
 	}
 	for _, ex := range block.Except {
-		p, err := netip.ParsePrefix(ex)
-		if err != nil {
-			continue
-		}
-		if p.Contains(addr) {
+		if p, err := netip.ParsePrefix(ex); err == nil && p.Contains(addr) {
 			return false
 		}
 	}
@@ -117,34 +87,18 @@ func SampleIP(block model.IPBlock) (string, bool) {
 		return "", false
 	}
 	addr := prefix.Addr()
-	for i := 0; i < 64; i++ {
+	for range 64 {
 		if IPInBlock(addr.String(), block) {
 			return addr.String(), true
 		}
-		next, ok := nextAddr(addr)
-		if !ok || !prefix.Contains(next) {
+		addr = addr.Next()
+		if !addr.IsValid() || !prefix.Contains(addr) {
 			return "", false
 		}
-		addr = next
 	}
 	return "", false
 }
 
-func nextAddr(a netip.Addr) (netip.Addr, bool) {
-	b := a.AsSlice()
-	for i := len(b) - 1; i >= 0; i-- {
-		b[i]++
-		if b[i] != 0 {
-			next, ok := netip.AddrFromSlice(b)
-			return next, ok
-		}
-	}
-	return netip.Addr{}, false
-}
-
 func normProto(p string) string {
-	if strings.TrimSpace(p) == "" {
-		return "TCP"
-	}
-	return strings.ToUpper(p)
+	return cmp.Or(strings.ToUpper(strings.TrimSpace(p)), "TCP")
 }

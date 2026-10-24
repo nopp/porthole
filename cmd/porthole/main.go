@@ -126,9 +126,7 @@ func runCheck(args []string) int {
 		return 2
 	}
 	if *asJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(res)
+		printJSON(res)
 	} else {
 		printResult(os.Stdout, res)
 	}
@@ -163,13 +161,17 @@ func runExplain(args []string) int {
 		return 2
 	}
 	if *asJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(ex)
-		return 0
+		printJSON(ex)
+	} else {
+		printExplain(os.Stdout, ex)
 	}
-	printExplain(os.Stdout, ex)
 	return 0
+}
+
+func printJSON(v any) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
 }
 
 func sourceFlags(fs *flag.FlagSet) (manifests, kubeconfig *string) {

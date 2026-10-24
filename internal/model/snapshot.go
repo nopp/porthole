@@ -1,6 +1,8 @@
 // Package model is the snapshot passed to eval. It has no client-go types.
 package model
 
+import "slices"
+
 // Direction is Ingress or Egress.
 type Direction string
 
@@ -18,8 +20,8 @@ type Snapshot struct {
 
 // Namespace is a name and the labels a namespaceSelector matches.
 type Namespace struct {
-	Name   string
-	Labels map[string]string
+	Name   string            `json:"name"`
+	Labels map[string]string `json:"labels"`
 }
 
 // Pod is the fields NetworkPolicy evaluation uses.
@@ -65,12 +67,7 @@ func (p Policy) Key() string {
 
 // Applies reports whether policyTypes includes dir.
 func (p Policy) Applies(dir Direction) bool {
-	for _, t := range p.PolicyTypes {
-		if t == dir {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(p.PolicyTypes, dir)
 }
 
 // Rules returns the allow rules for dir.

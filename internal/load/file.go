@@ -1,7 +1,6 @@
 package load
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -63,8 +62,10 @@ func (s FileSource) Load(ctx context.Context) (model.Snapshot, error) {
 		if err != nil {
 			return err
 		}
-		if err := ingestBytes(data, &b); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+		for _, doc := range splitDocs(data) {
+			if err := ingest(doc, &b); err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
 		}
 		return nil
 	})
@@ -74,48 +75,16 @@ func (s FileSource) Load(ctx context.Context) (model.Snapshot, error) {
 	return SnapshotFrom(b.namespaces, b.pods, b.policies), nil
 }
 
-func ingestBytes(data []byte, b *builder) error {
-	if len(bytes.TrimSpace(data)) == 0 {
+func ingest(doc []byte, b *builder) error {
+	if len(bytes.TrimSpace(doc)) == 0 {
 		return nil
 	}
-	// A JSON file is one value. YAML files may contain several documents.
-	if looksLikeJSON(data) {
-		return ingest(data, b)
-	}
-	docs, err := splitDocs(data)
-	if err != nil {
-		return err
-	}
-	for _, doc := range docs {
-		if err := ingest(doc, b); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func looksLikeJSON(data []byte) bool {
-	trim := bytes.TrimSpace(data)
-	return len(trim) > 0 && (trim[0] == '{' || trim[0] == '[')
-}
-
-func decode(doc []byte, out any) error {
-	if looksLikeJSON(doc) {
-		return json.Unmarshal(doc, out)
-	}
-	return yaml.Unmarshal(doc, out)
-}
-
-func ingest(doc []byte, b *builder) error {
 	var head struct {
 		Kind  string            `json:"kind"`
 		Items []json.RawMessage `json:"items"`
 	}
-	if err := decode(doc, &head); err != nil {
+	if err := yaml.Unmarshal(doc, &head); err != nil {
 		return err
-	}
-	if head.Kind == "" {
-		return nil
 	}
 	if strings.HasSuffix(head.Kind, "List") {
 		for _, item := range head.Items {
@@ -128,19 +97,19 @@ func ingest(doc []byte, b *builder) error {
 	switch head.Kind {
 	case "Pod":
 		var obj corev1.Pod
-		if err := decode(doc, &obj); err != nil {
+		if err := yaml.Unmarshal(doc, &obj); err != nil {
 			return err
 		}
 		b.pods = append(b.pods, obj)
 	case "Namespace":
 		var obj corev1.Namespace
-		if err := decode(doc, &obj); err != nil {
+		if err := yaml.Unmarshal(doc, &obj); err != nil {
 			return err
 		}
 		b.namespaces = append(b.namespaces, obj)
 	case "NetworkPolicy":
 		var obj networkingv1.NetworkPolicy
-		if err := decode(doc, &obj); err != nil {
+		if err := yaml.Unmarshal(doc, &obj); err != nil {
 			return err
 		}
 		b.policies = append(b.policies, obj)
@@ -148,30 +117,22 @@ func ingest(doc []byte, b *builder) error {
 	return nil
 }
 
-// splitDocs splits a YAML stream on lines whose only content is ---.
-func splitDocs(data []byte) ([][]byte, error) {
+func splitDocs(data []byte) [][]byte {
 	var docs [][]byte
-	var buf []byte
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
-	flush := func() {
-		if len(bytes.TrimSpace(buf)) > 0 {
-			docs = append(docs, append([]byte(nil), buf...))
-		}
-		buf = buf[:0]
-	}
-	for sc.Scan() {
-		line := sc.Bytes()
+	var buf bytes.Buffer
+	for line := range bytes.SplitSeq(data, []byte("\n")) {
 		if bytes.Equal(bytes.TrimSpace(line), []byte("---")) {
-			flush()
+			if buf.Len() > 0 {
+				docs = append(docs, bytes.Clone(buf.Bytes()))
+				buf.Reset()
+			}
 			continue
 		}
-		buf = append(buf, line...)
-		buf = append(buf, '\n')
+		buf.Write(line)
+		buf.WriteByte('\n')
 	}
-	flush()
-	if err := sc.Err(); err != nil {
-		return nil, err
+	if buf.Len() > 0 {
+		docs = append(docs, buf.Bytes())
 	}
-	return docs, nil
+	return docs
 }

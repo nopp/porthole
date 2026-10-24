@@ -3,7 +3,8 @@ package main
 import (
 	"fmt"
 	"io"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -31,8 +32,7 @@ func printSide(w io.Writer, side *eval.Side) {
 	if side.Isolated {
 		iso = "isolated"
 	}
-	fmt.Fprintf(w, "\n%s of %s: %s, %s\n", side.Direction, side.Subject, iso, state)
-	fmt.Fprintf(w, "  %s\n", side.Reason)
+	fmt.Fprintf(w, "\n%s of %s: %s, %s\n  %s\n", side.Direction, side.Subject, iso, state, side.Reason)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "  POLICY\tSELECTS\tAPPLIES\tDETAIL")
 	for _, pol := range side.Policies {
@@ -71,30 +71,24 @@ func printExplain(w io.Writer, ex eval.Explain) {
 }
 
 func formatLabels(labels map[string]string) string {
-	keys := make([]string, 0, len(labels))
-	for k := range labels {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	parts := make([]string, len(keys))
-	for i, k := range keys {
-		parts[i] = k + "=" + labels[k]
+	var parts []string
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		parts = append(parts, k+"="+labels[k])
 	}
 	return strings.Join(parts, ", ")
 }
 
 func joinDirs(ingress, egress bool) string {
-	var parts []string
-	if ingress {
-		parts = append(parts, "Ingress")
-	}
-	if egress {
-		parts = append(parts, "Egress")
-	}
-	if len(parts) == 0 {
+	switch {
+	case ingress && egress:
+		return "Ingress,Egress"
+	case ingress:
+		return "Ingress"
+	case egress:
+		return "Egress"
+	default:
 		return "—"
 	}
-	return strings.Join(parts, ",")
 }
 
 func yesNo(v bool) string {

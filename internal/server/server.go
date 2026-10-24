@@ -29,11 +29,11 @@ type Server struct {
 	sourceName string
 	interval   time.Duration
 
-	mu         sync.RWMutex
-	snap       *model.Snapshot
-	loadedAt   time.Time
-	lastErr    string
-	refreshGen uint64
+	refreshMu sync.Mutex
+	mu        sync.RWMutex
+	idx       *eval.Index
+	loadedAt  time.Time
+	lastErr   string
 }
 
 // New builds a server. Call Refresh before Run so the first request has data.
@@ -42,25 +42,20 @@ func New(source Source, sourceName string, interval time.Duration) *Server {
 }
 
 // Refresh replaces the snapshot. On failure the previous snapshot is kept.
-// A slower refresh that started earlier does not overwrite a newer one.
 func (s *Server) Refresh(ctx context.Context) error {
-	s.mu.Lock()
-	s.refreshGen++
-	gen := s.refreshGen
-	s.mu.Unlock()
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
 
 	snap, err := s.source.Load(ctx)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if gen != s.refreshGen {
-		return err
-	}
 	if err != nil {
 		s.lastErr = err.Error()
 		return err
 	}
-	s.snap = &snap
+	idx := eval.NewIndex(snap)
+	s.idx = &idx
 	s.loadedAt = time.Now()
 	s.lastErr = ""
 	return nil
@@ -154,10 +149,10 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 	if s.lastErr != "" {
 		body["refreshError"] = s.lastErr
 	}
-	if s.snap != nil {
-		body["namespaces"] = len(s.snap.Namespaces)
-		body["pods"] = len(s.snap.Pods)
-		body["policies"] = len(s.snap.Policies)
+	if s.idx != nil {
+		body["namespaces"] = len(s.idx.Snap.Namespaces)
+		body["pods"] = len(s.idx.Snap.Pods)
+		body["policies"] = len(s.idx.Snap.Policies)
 	}
 	writeJSON(w, http.StatusOK, body)
 }
@@ -168,15 +163,7 @@ func (s *Server) namespaces(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	type row struct {
-		Name   string            `json:"name"`
-		Labels map[string]string `json:"labels"`
-	}
-	out := make([]row, 0, len(idx.Snap.Namespaces))
-	for _, ns := range idx.Snap.Namespaces {
-		out = append(out, row{Name: ns.Name, Labels: ns.Labels})
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, idx.Snap.Namespaces)
 }
 
 func (s *Server) pods(w http.ResponseWriter, r *http.Request) {
@@ -196,35 +183,28 @@ func (s *Server) policies(w http.ResponseWriter, r *http.Request) {
 	}
 	ns := r.URL.Query().Get("namespace")
 	type row struct {
-		Namespace            string   `json:"namespace"`
-		Name                 string   `json:"name"`
-		PodSelector          string   `json:"podSelector"`
-		PolicyTypes          []string `json:"policyTypes"`
-		PolicyTypesDefaulted bool     `json:"policyTypesDefaulted"`
-		IngressRules         int      `json:"ingressRules"`
-		EgressRules          int      `json:"egressRules"`
+		Namespace            string            `json:"namespace"`
+		Name                 string            `json:"name"`
+		PodSelector          string            `json:"podSelector"`
+		PolicyTypes          []model.Direction `json:"policyTypes"`
+		PolicyTypesDefaulted bool              `json:"policyTypesDefaulted"`
+		IngressRules         int               `json:"ingressRules"`
+		EgressRules          int               `json:"egressRules"`
 	}
-	var out []row
+	out := []row{}
 	for _, pol := range idx.Snap.Policies {
 		if ns != "" && pol.Namespace != ns {
 			continue
-		}
-		types := make([]string, len(pol.PolicyTypes))
-		for i, d := range pol.PolicyTypes {
-			types[i] = string(d)
 		}
 		out = append(out, row{
 			Namespace:            pol.Namespace,
 			Name:                 pol.Name,
 			PodSelector:          idx.FormatSelector(pol.PodSelector),
-			PolicyTypes:          types,
+			PolicyTypes:          pol.PolicyTypes,
 			PolicyTypesDefaulted: pol.PolicyTypesDefaulted,
 			IngressRules:         len(pol.Ingress),
 			EgressRules:          len(pol.Egress),
 		})
-	}
-	if out == nil {
-		out = []row{}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -249,33 +229,12 @@ func (s *Server) check(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	var body struct {
-		From struct {
-			Namespace string `json:"namespace"`
-			Name      string `json:"name"`
-		} `json:"from"`
-		To struct {
-			Namespace string `json:"namespace"`
-			Name      string `json:"name"`
-		} `json:"to"`
-		FromIP   string `json:"fromIP"`
-		ToIP     string `json:"toIP"`
-		Protocol string `json:"protocol"`
-		Port     int32  `json:"port"`
-	}
-	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
-	if err := dec.Decode(&body); err != nil {
+	var q eval.Query
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&q); err != nil {
 		writeErr(w, http.StatusBadRequest, trReq(r, "JSON inválido", "invalid JSON"))
 		return
 	}
-	res, err := idx.Check(eval.Query{
-		From:     eval.PodRef{Namespace: body.From.Namespace, Name: body.From.Name},
-		FromIP:   body.FromIP,
-		To:       eval.PodRef{Namespace: body.To.Namespace, Name: body.To.Name},
-		ToIP:     body.ToIP,
-		Protocol: body.Protocol,
-		Port:     body.Port,
-	})
+	res, err := idx.Check(q)
 	if err != nil {
 		writeQueryErr(w, err)
 		return
@@ -290,16 +249,14 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	var port int32
+	port := int32(80)
 	if p := q.Get("port"); p != "" {
-		n, err := parsePort(p)
-		if err != nil {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 {
 			writeErr(w, http.StatusBadRequest, trReq(r, "porta inválida", "invalid port"))
 			return
 		}
-		port = n
-	} else {
-		port = 80
+		port = int32(n)
 	}
 	g, err := idx.Graph(q.Get("namespace"), q.Get("pod"), q.Get("protocol"), port, eval.PodRef{
 		Namespace: q.Get("toNamespace"),
@@ -325,10 +282,10 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 func (s *Server) current(r *http.Request) (eval.Index, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.snap == nil {
+	if s.idx == nil {
 		return eval.Index{}, errors.New(trReq(r, "snapshot ainda não foi carregado", "snapshot is not loaded yet"))
 	}
-	idx := eval.NewIndex(*s.snap)
+	idx := *s.idx
 	idx.Lang = requestLang(r)
 	return idx, nil
 }
@@ -349,22 +306,10 @@ func trReq(r *http.Request, pt, en string) string {
 	return pt
 }
 
-func parsePort(s string) (int32, error) {
-	n, err := strconv.Atoi(s)
-	if err != nil || n < 1 || n > 65535 {
-		return 0, errors.New("invalid port")
-	}
-	return int32(n), nil
-}
-
 func writeQueryErr(w http.ResponseWriter, err error) {
 	var qe *eval.QueryError
-	if errors.As(err, &qe) {
-		code := http.StatusBadRequest
-		if qe.NotFound {
-			code = http.StatusNotFound
-		}
-		writeErr(w, code, qe.Msg)
+	if errors.As(err, &qe) && qe.NotFound {
+		writeErr(w, http.StatusNotFound, qe.Msg)
 		return
 	}
 	writeErr(w, http.StatusBadRequest, err.Error())

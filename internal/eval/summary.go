@@ -2,7 +2,8 @@ package eval
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/pia/porthole/internal/model"
@@ -25,15 +26,9 @@ func (idx Index) summarizeRules(pol model.Policy) []string {
 func (idx Index) summarizeDirection(dir string, rules []model.Rule) []string {
 	if len(rules) == 0 {
 		if dir == "Ingress" {
-			return []string{idx.tr(
-				"Ingress: sem regras — nega todo o tráfego de entrada.",
-				"Ingress: no rules — denies all incoming traffic.",
-			)}
+			return []string{idx.tr("Ingress: sem regras — nega todo o tráfego de entrada.", "Ingress: no rules — denies all incoming traffic.")}
 		}
-		return []string{idx.tr(
-			"Egress: sem regras — nega todo o tráfego de saída.",
-			"Egress: no rules — denies all outgoing traffic.",
-		)}
+		return []string{idx.tr("Egress: sem regras — nega todo o tráfego de saída.", "Egress: no rules — denies all outgoing traffic.")}
 	}
 	lines := make([]string, 0, len(rules))
 	for _, rule := range rules {
@@ -99,7 +94,7 @@ func (idx Index) summarizePorts(ports []model.Port) string {
 		proto := normProto(p.Protocol)
 		switch {
 		case p.Port == nil && p.PortName == "":
-			parts = append(parts, idx.tr("todas as portas ", "all ")+proto+idx.tr("", " ports"))
+			parts = append(parts, idx.tr("todas as portas "+proto, "all "+proto+" ports"))
 		case p.PortName != "" && p.Port == nil:
 			parts = append(parts, proto+"/"+p.PortName)
 		case p.Port != nil && p.EndPort != nil:
@@ -111,31 +106,13 @@ func (idx Index) summarizePorts(ports []model.Port) string {
 	return strings.Join(parts, idx.tr(" ou ", " or "))
 }
 
-// FormatSelector renders a label selector. The package function is pt-BR.
-func FormatSelector(sel model.LabelSelector) string {
-	return formatSelector(sel, false)
-}
-
 // FormatSelector renders a label selector in the index language.
 func (idx Index) FormatSelector(sel model.LabelSelector) string {
-	return formatSelector(sel, idx.Lang == "en")
-}
-
-func formatSelector(sel model.LabelSelector, english bool) string {
-	all := "(todos)"
-	if english {
-		all = "(all)"
-	}
 	if Universal(sel) {
-		return all
+		return idx.tr("(todos)", "(all)")
 	}
 	var parts []string
-	keys := make([]string, 0, len(sel.MatchLabels))
-	for k := range sel.MatchLabels {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(sel.MatchLabels)) {
 		parts = append(parts, k+"="+sel.MatchLabels[k])
 	}
 	for _, exp := range sel.MatchExpressions {

@@ -4,6 +4,7 @@ package eval
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pia/porthole/internal/model"
@@ -51,8 +52,8 @@ func (idx Index) tr(pt, en string) string {
 
 // PodRef names a pod in the snapshot.
 type PodRef struct {
-	Namespace string
-	Name      string
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
 }
 
 func (r PodRef) key() string {
@@ -65,12 +66,12 @@ func (r PodRef) empty() bool {
 
 // Query is one flow. Set either From or FromIP, and either To or ToIP.
 type Query struct {
-	From     PodRef
-	FromIP   string
-	To       PodRef
-	ToIP     string
-	Protocol string
-	Port     int32
+	From     PodRef `json:"from"`
+	FromIP   string `json:"fromIP"`
+	To       PodRef `json:"to"`
+	ToIP     string `json:"toIP"`
+	Protocol string `json:"protocol"`
+	Port     int32  `json:"port"`
 }
 
 // QueryError is a bad query, not a denied flow.
@@ -83,18 +84,12 @@ func (e *QueryError) Error() string {
 	return e.Msg
 }
 
-func badQuery(msg string, args ...any) error {
-	if len(args) > 0 {
-		msg = fmt.Sprintf(msg, args...)
-	}
-	return &QueryError{Msg: msg}
+func badQuery(format string, args ...any) error {
+	return &QueryError{Msg: fmt.Sprintf(format, args...)}
 }
 
-func notFound(msg string, args ...any) error {
-	if len(args) > 0 {
-		msg = fmt.Sprintf(msg, args...)
-	}
-	return &QueryError{Msg: msg, NotFound: true}
+func notFound(format string, args ...any) error {
+	return &QueryError{Msg: fmt.Sprintf(format, args...), NotFound: true}
 }
 
 // Result is the verdict for one flow.
@@ -148,17 +143,17 @@ type Explain struct {
 
 // ExplainPolicy is one policy in an Explain result.
 type ExplainPolicy struct {
-	Namespace            string   `json:"namespace"`
-	Name                 string   `json:"name"`
-	Selects              bool     `json:"selects"`
-	PolicyTypes          []string `json:"policyTypes"`
-	PolicyTypesDefaulted bool     `json:"policyTypesDefaulted"`
-	IngressRules         int      `json:"ingressRules"`
-	EgressRules          int      `json:"egressRules"`
-	IsolatesIngress      bool     `json:"isolatesIngress"`
-	IsolatesEgress       bool     `json:"isolatesEgress"`
-	Rules                []string `json:"rules"`
-	Notes                []string `json:"notes,omitempty"`
+	Namespace            string            `json:"namespace"`
+	Name                 string            `json:"name"`
+	Selects              bool              `json:"selects"`
+	PolicyTypes          []model.Direction `json:"policyTypes"`
+	PolicyTypesDefaulted bool              `json:"policyTypesDefaulted"`
+	IngressRules         int               `json:"ingressRules"`
+	EgressRules          int               `json:"egressRules"`
+	IsolatesIngress      bool              `json:"isolatesIngress"`
+	IsolatesEgress       bool              `json:"isolatesEgress"`
+	Rules                []string          `json:"rules"`
+	Notes                []string          `json:"notes,omitempty"`
 }
 
 // Graph is the focus pod and the flows at one protocol and port.
@@ -237,8 +232,8 @@ func (idx Index) Explain(namespace, name string) (Explain, error) {
 		Namespace:       pod.Namespace,
 		Name:            pod.Name,
 		Labels:          pod.Labels,
-		IPs:             append([]string(nil), pod.IPs...),
-		Ports:           append([]model.ContainerPort(nil), pod.Ports...),
+		IPs:             pod.IPs,
+		Ports:           pod.Ports,
 		HostNetwork:     pod.HostNetwork,
 		Phase:           pod.Phase,
 		IngressIsolated: in,
@@ -269,7 +264,7 @@ func (idx Index) explainPolicy(pol model.Policy, pod model.Pod) ExplainPolicy {
 		Namespace:            pol.Namespace,
 		Name:                 pol.Name,
 		Selects:              selects,
-		PolicyTypes:          directions(pol.PolicyTypes),
+		PolicyTypes:          pol.PolicyTypes,
 		PolicyTypesDefaulted: pol.PolicyTypesDefaulted,
 		IngressRules:         len(pol.Ingress),
 		EgressRules:          len(pol.Egress),
@@ -295,19 +290,19 @@ func (idx Index) Check(q Query) (Result, error) {
 		return Result{}, err
 	}
 	if q.Port < 1 || q.Port > 65535 {
-		return Result{}, badQuery(idx.tr("porta deve estar entre 1 e 65535", "port must be between 1 and 65535"))
+		return Result{}, badQuery("%s", idx.tr("porta deve estar entre 1 e 65535", "port must be between 1 and 65535"))
 	}
 	if q.From.empty() == (q.FromIP == "") {
-		return Result{}, badQuery(idx.tr("informe o pod de origem ou um IP de origem, não os dois", "set either the source pod or a source IP, not both"))
+		return Result{}, badQuery("%s", idx.tr("informe o pod de origem ou um IP de origem, não os dois", "set either the source pod or a source IP, not both"))
 	}
 	if q.To.empty() == (q.ToIP == "") {
-		return Result{}, badQuery(idx.tr("informe o pod de destino ou um IP de destino, não os dois", "set either the destination pod or a destination IP, not both"))
+		return Result{}, badQuery("%s", idx.tr("informe o pod de destino ou um IP de destino, não os dois", "set either the destination pod or a destination IP, not both"))
 	}
 	if q.FromIP != "" && q.ToIP != "" {
-		return Result{}, badQuery(idx.tr("os dois lados não podem ser IP; um lado precisa ser um pod", "both sides cannot be IPs; one side must be a pod"))
+		return Result{}, badQuery("%s", idx.tr("os dois lados não podem ser IP; um lado precisa ser um pod", "both sides cannot be IPs; one side must be a pod"))
 	}
 
-	res := Result{Protocol: proto, Port: q.Port}
+	res := Result{Protocol: proto, Port: q.Port, From: q.FromIP, To: q.ToIP}
 
 	var src *model.Pod
 	if !q.From.empty() {
@@ -317,8 +312,6 @@ func (idx Index) Check(q Query) (Result, error) {
 		}
 		src = &pod
 		res.From = pod.Key()
-	} else {
-		res.From = q.FromIP
 	}
 
 	var dst *model.Pod
@@ -329,8 +322,6 @@ func (idx Index) Check(q Query) (Result, error) {
 		}
 		dst = &pod
 		res.To = pod.Key()
-	} else {
-		res.To = q.ToIP
 	}
 
 	if src != nil && dst != nil && src.Key() == dst.Key() {
@@ -352,13 +343,9 @@ func (idx Index) Check(q Query) (Result, error) {
 		res.Ingress = &side
 	}
 
-	res.Allowed = sideAllowed(res.Egress) && sideAllowed(res.Ingress)
+	res.Allowed = (res.Egress == nil || res.Egress.Allowed) && (res.Ingress == nil || res.Ingress.Allowed)
 	res.Summary = idx.summarizeVerdict(res)
 	return res, nil
-}
-
-func sideAllowed(s *Side) bool {
-	return s == nil || s.Allowed
 }
 
 // Graph draws the focus pod. A peer pod or peer IP draws that flow.
@@ -370,7 +357,7 @@ func (idx Index) Graph(namespace, name, protocol string, port int32, peer PodRef
 		return Graph{}, err
 	}
 	if port < 1 || port > 65535 {
-		return Graph{}, badQuery(idx.tr("porta deve estar entre 1 e 65535", "port must be between 1 and 65535"))
+		return Graph{}, badQuery("%s", idx.tr("porta deve estar entre 1 e 65535", "port must be between 1 and 65535"))
 	}
 	focus, ok := idx.podByKey[namespace+"/"+name]
 	if !ok {
@@ -381,17 +368,16 @@ func (idx Index) Graph(namespace, name, protocol string, port int32, peer PodRef
 		Focus:    focus.Key(),
 		Protocol: proto,
 		Port:     port,
-		Nodes:    []GraphNode{},
-		Edges:    []GraphEdge{},
+		Nodes: []GraphNode{{
+			ID:        focus.Key(),
+			Kind:      "pod",
+			Namespace: focus.Namespace,
+			Name:      focus.Name,
+			IPs:       focus.IPs,
+			Focus:     true,
+		}},
+		Edges: []GraphEdge{},
 	}
-	g.Nodes = append(g.Nodes, GraphNode{
-		ID:        focus.Key(),
-		Kind:      "pod",
-		Namespace: focus.Namespace,
-		Name:      focus.Name,
-		IPs:       focus.IPs,
-		Focus:     true,
-	})
 
 	if peerIP != "" || !peer.empty() {
 		if err := idx.addChosenPeer(&g, focus, peer, peerIP, proto, port); err != nil {
@@ -403,24 +389,24 @@ func (idx Index) Graph(namespace, name, protocol string, port int32, peer PodRef
 	peers, truncated, notes := idx.graphPeers(focus)
 	g.Truncated = truncated
 	g.Notes = notes
-	for _, peer := range peers {
+	for _, p := range peers {
 		g.Nodes = append(g.Nodes, GraphNode{
-			ID:        peer.Key(),
+			ID:        p.Key(),
 			Kind:      "pod",
-			Namespace: peer.Namespace,
-			Name:      peer.Name,
-			IPs:       peer.IPs,
+			Namespace: p.Namespace,
+			Name:      p.Name,
+			IPs:       p.IPs,
 		})
-		out, err := idx.Check(Query{From: podRef(focus), To: podRef(peer), Protocol: proto, Port: port})
+		out, err := idx.Check(Query{From: podRef(focus), To: podRef(p), Protocol: proto, Port: port})
 		if err != nil {
 			return Graph{}, err
 		}
-		g.Edges = append(g.Edges, GraphEdge{From: focus.Key(), To: peer.Key(), Allowed: out.Allowed, Reason: out.Summary})
-		in, err := idx.Check(Query{From: podRef(peer), To: podRef(focus), Protocol: proto, Port: port})
+		g.Edges = append(g.Edges, GraphEdge{From: focus.Key(), To: p.Key(), Allowed: out.Allowed, Reason: out.Summary})
+		in, err := idx.Check(Query{From: podRef(p), To: podRef(focus), Protocol: proto, Port: port})
 		if err != nil {
 			return Graph{}, err
 		}
-		g.Edges = append(g.Edges, GraphEdge{From: peer.Key(), To: focus.Key(), Allowed: in.Allowed, Reason: in.Summary})
+		g.Edges = append(g.Edges, GraphEdge{From: p.Key(), To: focus.Key(), Allowed: in.Allowed, Reason: in.Summary})
 	}
 
 	seenCIDR := map[string]bool{}
@@ -446,7 +432,7 @@ func (idx Index) addChosenPeer(g *Graph, focus model.Pod, peer PodRef, peerIP, p
 		return nil
 	}
 	if peer.Namespace == "" || peer.Name == "" {
-		return badQuery(idx.tr("informe namespace e nome do pod de destino", "set both the destination namespace and pod name"))
+		return badQuery("%s", idx.tr("informe namespace e nome do pod de destino", "set both the destination namespace and pod name"))
 	}
 	other, ok := idx.podByKey[peer.key()]
 	if !ok {
@@ -488,6 +474,10 @@ func (idx Index) graphPeers(focus model.Pod) (peers []model.Pod, truncated bool,
 			add(p)
 		}
 	}
+	universalNote := idx.tr(
+		"Há um namespaceSelector vazio (todos os namespaces). O grafo não puxa pods de fora do namespace do foco.",
+		"A namespaceSelector matches every namespace. The graph does not pull pods from outside the focus namespace.",
+	)
 	for _, pol := range idx.polsByNS[focus.Namespace] {
 		if !policySelects(pol, focus) {
 			continue
@@ -499,15 +489,13 @@ func (idx Index) graphPeers(focus model.Pod) (peers []model.Pod, truncated bool,
 						continue
 					}
 					if Universal(*peer.NamespaceSelector) {
-						notes = append(notes, idx.tr(
-							"Há um namespaceSelector vazio (todos os namespaces). O grafo não puxa pods de fora do namespace do foco.",
-							"A namespaceSelector matches every namespace. The graph does not pull pods from outside the focus namespace.",
-						))
+						if !slices.Contains(notes, universalNote) {
+							notes = append(notes, universalNote)
+						}
 						continue
 					}
 					for _, p := range idx.Snap.Pods {
-						ns := idx.nsByName[p.Namespace]
-						if Matches(*peer.NamespaceSelector, ns.Labels) {
+						if Matches(*peer.NamespaceSelector, idx.nsByName[p.Namespace].Labels) {
 							add(p)
 						}
 					}
@@ -518,7 +506,7 @@ func (idx Index) graphPeers(focus model.Pod) (peers []model.Pod, truncated bool,
 	if truncated {
 		notes = append(notes, fmt.Sprintf(idx.tr("Grafo limitado a %d pods.", "Graph limited to %d pods."), MaxGraphPods))
 	}
-	return peers, truncated, dedupe(notes)
+	return peers, truncated, notes
 }
 
 func (idx Index) addCIDREdges(g *Graph, focus model.Pod, pol model.Policy, dir model.Direction, proto string, port int32, seen map[string]bool) {
@@ -539,20 +527,15 @@ func (idx Index) addCIDREdges(g *Graph, focus model.Pod, pol model.Policy, dir m
 			if !ok {
 				continue
 			}
-			var (
-				res Result
-				err error
-			)
-			if dir == model.Egress {
-				res, err = idx.Check(Query{From: podRef(focus), ToIP: sample, Protocol: proto, Port: port})
-				if err == nil && !hasEdge(g, focus.Key(), id) {
-					g.Edges = append(g.Edges, GraphEdge{From: focus.Key(), To: id, Allowed: res.Allowed, Reason: res.Summary})
-				}
-			} else {
-				res, err = idx.Check(Query{FromIP: sample, To: podRef(focus), Protocol: proto, Port: port})
-				if err == nil && !hasEdge(g, id, focus.Key()) {
-					g.Edges = append(g.Edges, GraphEdge{From: id, To: focus.Key(), Allowed: res.Allowed, Reason: res.Summary})
-				}
+			q := Query{From: podRef(focus), ToIP: sample, Protocol: proto, Port: port}
+			from, to := focus.Key(), id
+			if dir == model.Ingress {
+				q = Query{FromIP: sample, To: podRef(focus), Protocol: proto, Port: port}
+				from, to = id, focus.Key()
+			}
+			res, err := idx.Check(q)
+			if err == nil && !slices.ContainsFunc(g.Edges, func(e GraphEdge) bool { return e.From == from && e.To == to }) {
+				g.Edges = append(g.Edges, GraphEdge{From: from, To: to, Allowed: res.Allowed, Reason: res.Summary})
 			}
 		}
 	}
@@ -592,7 +575,7 @@ func (idx Index) evalDirection(dir model.Direction, subject model.Pod, peerPod *
 		} else if len(pol.Rules(dir)) == 0 {
 			tr.Detail = idx.tr("isola ", "isolates ") + string(dir) + idx.tr(" e não tem regras", " and has no rules")
 		} else {
-			tr.Detail = idx.tr("nenhuma regra casa com este peer em ", "no rule matches this peer on ") + proto + "/" + fmt.Sprint(port)
+			tr.Detail = fmt.Sprintf("%s%s/%d", idx.tr("nenhuma regra casa com este peer em ", "no rule matches this peer on "), proto, port)
 		}
 		side.Policies = append(side.Policies, tr)
 	}
@@ -630,8 +613,7 @@ func destPorts(dir model.Direction, subject model.Pod, peerPod *model.Pod) []mod
 }
 
 func policyAllows(idx Index, pol model.Policy, dir model.Direction, peerPod *model.Pod, peerIP, proto string, port int32, ports []model.ContainerPort) (bool, string) {
-	rules := pol.Rules(dir)
-	for _, rule := range rules {
+	for _, rule := range pol.Rules(dir) {
 		if ok, via := ruleAllows(idx, pol.Namespace, rule, peerPod, peerIP, proto, port, ports); ok {
 			return true, via
 		}
@@ -640,16 +622,14 @@ func policyAllows(idx Index, pol model.Policy, dir model.Direction, peerPod *mod
 }
 
 func ruleAllows(idx Index, policyNS string, rule model.Rule, peerPod *model.Pod, peerIP, proto string, port int32, dest []model.ContainerPort) (bool, string) {
-	via := ""
-	switch {
-	case len(rule.Peers) == 0:
-		via = idx.tr("todos os peers", "all peers")
-	default:
-		ok := false
+	if !portsAllow(rule.Ports, proto, port, dest) {
+		return false, ""
+	}
+	via := idx.tr("todos os peers", "all peers")
+	if len(rule.Peers) > 0 {
+		var ok bool
 		for _, peer := range rule.Peers {
-			if matched, how := peerMatches(idx, policyNS, peer, peerPod, peerIP); matched {
-				ok = true
-				via = how
+			if ok, via = peerMatches(idx, policyNS, peer, peerPod, peerIP); ok {
 				break
 			}
 		}
@@ -657,15 +637,10 @@ func ruleAllows(idx Index, policyNS string, rule model.Rule, peerPod *model.Pod,
 			return false, ""
 		}
 	}
-	if !portsAllow(rule.Ports, proto, port, dest) {
-		return false, ""
-	}
 	if len(rule.Ports) == 0 {
-		via += idx.tr(", todas as portas", ", all ports")
-	} else {
-		via += fmt.Sprintf(", %s/%d", proto, port)
+		return true, via + idx.tr(", todas as portas", ", all ports")
 	}
-	return true, via
+	return true, fmt.Sprintf("%s, %s/%d", via, proto, port)
 }
 
 func peerMatches(idx Index, policyNS string, peer model.Peer, peerPod *model.Pod, peerIP string) (bool, string) {
@@ -688,8 +663,7 @@ func peerMatches(idx Index, policyNS string, peer model.Peer, peerPod *model.Pod
 			return false, ""
 		}
 		if peer.NamespaceSelector != nil {
-			ns := idx.nsByName[peerPod.Namespace]
-			if !Matches(*peer.NamespaceSelector, ns.Labels) {
+			if !Matches(*peer.NamespaceSelector, idx.nsByName[peerPod.Namespace].Labels) {
 				return false, ""
 			}
 		} else if peerPod.Namespace != policyNS {
@@ -698,23 +672,17 @@ func peerMatches(idx Index, policyNS string, peer model.Peer, peerPod *model.Pod
 		if peer.PodSelector != nil && !Matches(*peer.PodSelector, peerPod.Labels) {
 			return false, ""
 		}
-		if peer.NamespaceSelector != nil && peer.PodSelector != nil {
+		switch {
+		case peer.NamespaceSelector != nil && peer.PodSelector != nil:
 			return true, idx.tr("namespaceSelector e podSelector", "namespaceSelector and podSelector")
-		}
-		if peer.NamespaceSelector != nil {
+		case peer.NamespaceSelector != nil:
 			return true, "namespaceSelector"
+		default:
+			return true, idx.tr("podSelector no namespace ", "podSelector in namespace ") + policyNS
 		}
-		return true, idx.tr("podSelector no namespace ", "podSelector in namespace ") + policyNS
 	}
 
-	ip := peerIP
-	if ip == "" && peerPod != nil && len(peerPod.IPs) > 0 {
-		ip = peerPod.IPs[0]
-	}
-	if ip == "" || peer.IPBlock == nil {
-		return false, ""
-	}
-	if IPInBlock(ip, *peer.IPBlock) {
+	if peerIP != "" && peer.IPBlock != nil && IPInBlock(peerIP, *peer.IPBlock) {
 		return true, "ipBlock " + peer.IPBlock.CIDR
 	}
 	return false, ""
@@ -728,45 +696,34 @@ func portsAllow(ports []model.Port, proto string, port int32, dest []model.Conta
 		if !strings.EqualFold(normProto(p.Protocol), proto) {
 			continue
 		}
-		if p.Port == nil && p.PortName == "" {
+		switch {
+		case p.Port == nil && p.PortName == "":
 			return true
-		}
-		if p.PortName != "" && p.Port == nil {
+		case p.Port == nil:
 			if namedPort(p.PortName, proto, port, dest) {
 				return true
 			}
-			continue
-		}
-		if p.Port == nil {
-			continue
-		}
-		if p.EndPort != nil {
+		case p.EndPort != nil:
 			if port >= *p.Port && port <= *p.EndPort {
 				return true
 			}
-			continue
-		}
-		if port == *p.Port {
-			return true
+		default:
+			if port == *p.Port {
+				return true
+			}
 		}
 	}
 	return false
 }
 
 func namedPort(name, proto string, port int32, dest []model.ContainerPort) bool {
-	for _, cp := range dest {
-		if cp.Name == name && strings.EqualFold(normProto(cp.Protocol), proto) && cp.Port == port {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(dest, func(cp model.ContainerPort) bool {
+		return cp.Name == name && strings.EqualFold(normProto(cp.Protocol), proto) && cp.Port == port
+	})
 }
 
 func policySelects(pol model.Policy, pod model.Pod) bool {
-	if pol.Namespace != pod.Namespace {
-		return false
-	}
-	return Matches(pol.PodSelector, pod.Labels)
+	return pol.Namespace == pod.Namespace && Matches(pol.PodSelector, pod.Labels)
 }
 
 func (idx Index) isolated(pod model.Pod) (ingress, egress bool) {
@@ -785,13 +742,9 @@ func (idx Index) isolated(pod model.Pod) (ingress, egress bool) {
 }
 
 func (idx Index) normalizeProtocol(p string) (string, error) {
-	switch strings.ToUpper(strings.TrimSpace(p)) {
-	case "", "TCP":
-		return "TCP", nil
-	case "UDP":
-		return "UDP", nil
-	case "SCTP":
-		return "SCTP", nil
+	switch proto := normProto(p); proto {
+	case "TCP", "UDP", "SCTP":
+		return proto, nil
 	default:
 		return "", badQuery(idx.tr("protocolo %q não é TCP, UDP ou SCTP", "protocol %q is not TCP, UDP, or SCTP"), p)
 	}
@@ -809,39 +762,6 @@ func (idx Index) peerLabel(pod *model.Pod, ip string) string {
 		return ip
 	}
 	return idx.tr("o peer", "the peer")
-}
-
-func directions(in []model.Direction) []string {
-	out := make([]string, len(in))
-	for i, d := range in {
-		out[i] = string(d)
-	}
-	return out
-}
-
-func hasEdge(g *Graph, from, to string) bool {
-	for _, e := range g.Edges {
-		if e.From == from && e.To == to {
-			return true
-		}
-	}
-	return false
-}
-
-func dedupe(in []string) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := map[string]bool{}
-	var out []string
-	for _, s := range in {
-		if seen[s] {
-			continue
-		}
-		seen[s] = true
-		out = append(out, s)
-	}
-	return out
 }
 
 func (idx Index) summarizeVerdict(res Result) string {

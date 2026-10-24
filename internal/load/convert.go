@@ -1,7 +1,9 @@
 package load
 
 import (
-	"sort"
+	"cmp"
+	"maps"
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -22,29 +24,26 @@ func SnapshotFrom(namespaces []corev1.Namespace, pods []corev1.Pod, policies []n
 		Policies:   make([]model.Policy, 0, len(policies)),
 	}
 	for _, ns := range namespaces {
-		if ns.Name == "" {
-			continue
+		if ns.Name != "" {
+			snap.Namespaces = append(snap.Namespaces, model.Namespace{
+				Name:   ns.Name,
+				Labels: maps.Clone(ns.Labels),
+			})
 		}
-		snap.Namespaces = append(snap.Namespaces, model.Namespace{
-			Name:   ns.Name,
-			Labels: copyMap(ns.Labels),
-		})
 	}
 	for _, pod := range pods {
-		if pod.Name == "" {
-			continue
+		if pod.Name != "" {
+			snap.Pods = append(snap.Pods, convertPod(pod))
 		}
-		snap.Pods = append(snap.Pods, convertPod(pod))
 	}
 	for _, pol := range policies {
-		if pol.Name == "" {
-			continue
+		if pol.Name != "" {
+			snap.Policies = append(snap.Policies, convertPolicy(pol))
 		}
-		snap.Policies = append(snap.Policies, convertPolicy(pol))
 	}
-	sort.Slice(snap.Namespaces, func(i, j int) bool { return snap.Namespaces[i].Name < snap.Namespaces[j].Name })
-	sort.Slice(snap.Pods, func(i, j int) bool { return snap.Pods[i].Key() < snap.Pods[j].Key() })
-	sort.Slice(snap.Policies, func(i, j int) bool { return snap.Policies[i].Key() < snap.Policies[j].Key() })
+	slices.SortFunc(snap.Namespaces, func(a, b model.Namespace) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(snap.Pods, func(a, b model.Pod) int { return cmp.Compare(a.Key(), b.Key()) })
+	slices.SortFunc(snap.Policies, func(a, b model.Policy) int { return cmp.Compare(a.Key(), b.Key()) })
 	return snap
 }
 
@@ -52,7 +51,7 @@ func convertPod(pod corev1.Pod) model.Pod {
 	out := model.Pod{
 		Namespace:   pod.Namespace,
 		Name:        pod.Name,
-		Labels:      copyMap(pod.Labels),
+		Labels:      maps.Clone(pod.Labels),
 		Phase:       string(pod.Status.Phase),
 		HostNetwork: pod.Spec.HostNetwork,
 	}
@@ -60,20 +59,17 @@ func convertPod(pod corev1.Pod) model.Pod {
 		out.IPs = append(out.IPs, pod.Status.PodIP)
 	}
 	for _, ip := range pod.Status.PodIPs {
-		if ip.IP != "" && !contains(out.IPs, ip.IP) {
+		if ip.IP != "" && !slices.Contains(out.IPs, ip.IP) {
 			out.IPs = append(out.IPs, ip.IP)
 		}
 	}
 	for _, c := range pod.Spec.Containers {
 		for _, p := range c.Ports {
-			proto := string(p.Protocol)
-			if proto == "" {
-				proto = "TCP"
-			}
+			proto := cmp.Or(strings.ToUpper(string(p.Protocol)), "TCP")
 			out.Ports = append(out.Ports, model.ContainerPort{
 				Name:     p.Name,
 				Port:     p.ContainerPort,
-				Protocol: strings.ToUpper(proto),
+				Protocol: proto,
 			})
 		}
 	}
@@ -106,9 +102,6 @@ func convertPolicy(pol networkingv1.NetworkPolicy) model.Policy {
 }
 
 func convertIngress(rules []networkingv1.NetworkPolicyIngressRule) []model.Rule {
-	if rules == nil {
-		return nil
-	}
 	out := make([]model.Rule, 0, len(rules))
 	for _, rule := range rules {
 		out = append(out, model.Rule{Peers: convertPeers(rule.From), Ports: convertPorts(rule.Ports)})
@@ -117,9 +110,6 @@ func convertIngress(rules []networkingv1.NetworkPolicyIngressRule) []model.Rule 
 }
 
 func convertEgress(rules []networkingv1.NetworkPolicyEgressRule) []model.Rule {
-	if rules == nil {
-		return nil
-	}
 	out := make([]model.Rule, 0, len(rules))
 	for _, rule := range rules {
 		out = append(out, model.Rule{Peers: convertPeers(rule.To), Ports: convertPorts(rule.Ports)})
@@ -128,91 +118,60 @@ func convertEgress(rules []networkingv1.NetworkPolicyEgressRule) []model.Rule {
 }
 
 func convertPeers(peers []networkingv1.NetworkPolicyPeer) []model.Peer {
-	if peers == nil {
-		return nil
-	}
 	out := make([]model.Peer, 0, len(peers))
 	for _, peer := range peers {
-		out = append(out, convertPeer(peer))
-	}
-	return out
-}
-
-func convertPeer(peer networkingv1.NetworkPolicyPeer) model.Peer {
-	out := model.Peer{}
-	if peer.PodSelector != nil {
-		sel := convertSelector(*peer.PodSelector)
-		out.PodSelector = &sel
-	}
-	if peer.NamespaceSelector != nil {
-		sel := convertSelector(*peer.NamespaceSelector)
-		out.NamespaceSelector = &sel
-	}
-	if peer.IPBlock != nil {
-		out.IPBlock = &model.IPBlock{
-			CIDR:   peer.IPBlock.CIDR,
-			Except: append([]string(nil), peer.IPBlock.Except...),
+		var p model.Peer
+		if peer.PodSelector != nil {
+			sel := convertSelector(*peer.PodSelector)
+			p.PodSelector = &sel
 		}
+		if peer.NamespaceSelector != nil {
+			sel := convertSelector(*peer.NamespaceSelector)
+			p.NamespaceSelector = &sel
+		}
+		if peer.IPBlock != nil {
+			p.IPBlock = &model.IPBlock{
+				CIDR:   peer.IPBlock.CIDR,
+				Except: slices.Clone(peer.IPBlock.Except),
+			}
+		}
+		out = append(out, p)
 	}
 	return out
 }
 
 func convertPorts(ports []networkingv1.NetworkPolicyPort) []model.Port {
-	if ports == nil {
-		return nil
-	}
 	out := make([]model.Port, 0, len(ports))
 	for _, p := range ports {
-		out = append(out, convertPort(p))
-	}
-	return out
-}
-
-func convertPort(p networkingv1.NetworkPolicyPort) model.Port {
-	out := model.Port{Protocol: "TCP"}
-	if p.Protocol != nil && *p.Protocol != "" {
-		out.Protocol = strings.ToUpper(string(*p.Protocol))
-	}
-	if p.Port != nil {
-		if p.Port.Type == intstr.String {
-			out.PortName = p.Port.StrVal
-		} else {
-			n := p.Port.IntVal
-			out.Port = &n
+		mp := model.Port{Protocol: "TCP"}
+		if p.Protocol != nil && *p.Protocol != "" {
+			mp.Protocol = strings.ToUpper(string(*p.Protocol))
 		}
-	}
-	if p.EndPort != nil {
-		n := *p.EndPort
-		out.EndPort = &n
+		if p.Port != nil {
+			if p.Port.Type == intstr.String {
+				mp.PortName = p.Port.StrVal
+			} else {
+				n := p.Port.IntVal
+				mp.Port = &n
+			}
+		}
+		if p.EndPort != nil {
+			n := *p.EndPort
+			mp.EndPort = &n
+		}
+		out = append(out, mp)
 	}
 	return out
 }
 
 func convertSelector(sel metav1.LabelSelector) model.LabelSelector {
-	out := model.LabelSelector{MatchLabels: copyMap(sel.MatchLabels)}
+	out := model.LabelSelector{MatchLabels: maps.Clone(sel.MatchLabels)}
 	for _, exp := range sel.MatchExpressions {
 		out.MatchExpressions = append(out.MatchExpressions, model.LabelExpression{
 			Key:      exp.Key,
 			Operator: string(exp.Operator),
-			Values:   append([]string(nil), exp.Values...),
+			Values:   slices.Clone(exp.Values),
 		})
 	}
 	return out
-}
-
-func copyMap(in map[string]string) map[string]string {
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-func contains(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }
