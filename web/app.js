@@ -183,18 +183,19 @@ async function loadAll() {
   $("meta").textContent = `${meta.source || "snapshot"} · ${meta.namespaces || 0} ns · ${meta.pods || 0} ${t("pods")} · ${meta.policies || 0} ${t("policies")} · ${when}${err}`;
 
   const names = namespaces.map((n) => n.name);
-  const fromNS = $("from-ns").value;
-  const toNS = $("to-ns").value;
+  const defaultNS = state.pods[0]?.namespace || "";
+  const fromNS = $("from-ns").value || defaultNS;
+  const toNS = $("to-ns").value || fromNS;
   const fromPod = state.booted ? $("from").value : null;
   const toPod = state.booted ? $("to").value : null;
   fillNamespaceSelect($("from-ns"), names, fromNS);
-  fillNamespaceSelect($("to-ns"), names, toNS || fromNS);
+  fillNamespaceSelect($("to-ns"), names, toNS);
   fillPodSelect($("from"), $("from-ns").value, fromPod, false);
   fillPodSelect($("to"), $("to-ns").value, toPod, true);
   if (!state.booted) preferAnotherTarget();
   state.booted = true;
 
-  const hasPods = state.pods.length > 0 && $("from").value;
+  const hasPods = state.pods.length > 0;
   $("detail").classList.toggle("hidden", !hasPods);
   $("none").classList.toggle("hidden", hasPods);
   if (hasPods) await showFrom();
@@ -239,7 +240,13 @@ async function chooseFrom(namespace, name) {
 async function showFrom() {
   const key = $("from").value;
   const ref = parseKey(key);
-  if (!ref) return;
+  $("explain").classList.toggle("hidden", !ref);
+  $("graph-panel").classList.toggle("hidden", !ref);
+  if (!ref) {
+    state.selected = null;
+    $("verdict").classList.add("hidden");
+    return;
+  }
   const changed = state.selected !== key;
   state.selected = key;
   const explain = await api(`/api/pods/${encodeURIComponent(ref.namespace)}/${encodeURIComponent(ref.name)}`);
